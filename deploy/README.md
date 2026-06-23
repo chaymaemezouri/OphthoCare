@@ -3,6 +3,45 @@
 Stack Docker : PostgreSQL, Redis, API NestJS, frontend Next.js.  
 Accès par **IP publique** (pas de HTTPS Let’s Encrypt tant qu’il n’y a pas de nom de domaine).
 
+## Structure VPS (plusieurs projets)
+
+Un dossier par application sous `/srv` — **le dépôt git est directement dans ce dossier** (pas de sous-dossier `OphthoCare/OphthoCare`) :
+
+```text
+/srv/
+  ophthocare/            ← cd ici = racine du projet
+    Backend/
+    frontend/
+    deploy/
+      .env
+  autre-projet/          ← futur déploiement
+    ...
+```
+
+Création + clone :
+
+```bash
+sudo mkdir -p /srv/ophthocare
+sudo chown -R $USER:$USER /srv/ophthocare
+cd /srv/ophthocare
+git clone https://github.com/chaymaemezouri/OphthoCare.git .
+cd deploy
+```
+
+Le `.` à la fin de `git clone` évite le dossier imbriqué `OphthoCare/OphthoCare`.
+
+**Déjà cloné avec un dossier en trop** (`/srv/ophthocare/OphthoCare/`) :
+
+```bash
+cd /srv/ophthocare
+shopt -s dotglob
+mv OphthoCare/* .
+rmdir OphthoCare
+cd deploy
+```
+
+Toutes les commandes `docker compose` s’exécutent depuis `/srv/ophthocare/deploy`.
+
 ## Prérequis VPS (Ubuntu/Debian)
 
 ```bash
@@ -22,9 +61,13 @@ sudo ufw enable
 
 ## 1. Cloner le dépôt
 
+Voir [Structure VPS](#structure-vps-plusieurs-projets) — exemple rapide :
+
 ```bash
-git clone https://github.com/chaymaemezouri/OphthoCare.git
-cd OphthoCare/deploy
+sudo mkdir -p /srv/ophthocare && sudo chown -R $USER:$USER /srv/ophthocare
+cd /srv/ophthocare
+git clone https://github.com/chaymaemezouri/OphthoCare.git .
+cd deploy
 ```
 
 ## 2. Fichier `.env`
