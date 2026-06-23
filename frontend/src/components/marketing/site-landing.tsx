@@ -89,7 +89,6 @@ const HERO_VIDEO_MASK: CSSProperties = {
 
 const ADVANTAGES = [
   {
-    num: '01',
     title: 'Parcours patient fluide',
     desc: 'Recherche, réservation et suivi dans un seul espace connecté.',
     href: '/search',
@@ -97,7 +96,6 @@ const ADVANTAGES = [
     accent: '#7EADD0',
   },
   {
-    num: '02',
     title: 'Précision clinique',
     desc: 'Consultations structurées par spécialité avec pré-consultation.',
     href: '/login?intent=pro',
@@ -105,7 +103,6 @@ const ADVANTAGES = [
     accent: '#B7A7FF',
   },
   {
-    num: '03',
     title: 'Pilotage cabinet',
     desc: 'Agenda, équipe, documents PDF et messagerie unifiés.',
     href: PRO_MAIL,
@@ -279,7 +276,7 @@ export function SiteLanding({ user }: SiteLandingProps) {
         <FloatingOrbs />
         {/* Visuel prolongé sous le hero pour alimenter le blur de la carte */}
         <div
-          className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-[min(130vh,1000px)] overflow-visible"
+          className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-[min(92svh,720px)] overflow-visible sm:h-[min(130vh,1000px)]"
           aria-hidden
         >
           <motion.div style={{ y: heroVideoY }} className="absolute inset-0 flex items-start justify-end overflow-visible pr-0 sm:pr-4 lg:pr-6 xl:pr-8">
@@ -294,7 +291,7 @@ export function SiteLanding({ user }: SiteLandingProps) {
                 preload="auto"
                 onError={() => setHeroVideoSrc(HERO_VIDEO_FALLBACK)}
                 style={HERO_VIDEO_MASK}
-                className="h-[min(100svh,920px)] w-[min(92vw,880px)] max-w-none object-cover object-top saturate-[1.12] contrast-[1.03] sm:h-[min(105vh,960px)] sm:w-[min(86vw,900px)] lg:h-[min(112vh,1000px)] lg:w-[min(78vw,920px)]"
+                className="h-[min(72svh,640px)] w-[min(100vw,520px)] max-w-none object-cover object-top saturate-[1.12] contrast-[1.03] sm:h-[min(100svh,920px)] sm:w-[min(92vw,880px)] lg:h-[min(112vh,1000px)] lg:w-[min(78vw,920px)]"
               />
               <div
                 className="pointer-events-none absolute inset-0 z-[1] bg-gradient-to-br from-[#D8D0FF]/12 via-white/5 to-[#CFE7F3]/18 mix-blend-soft-light"
@@ -319,16 +316,16 @@ export function SiteLanding({ user }: SiteLandingProps) {
 
         <section
           id="recherche"
-          className="relative z-10 flex min-h-[min(100svh,920px)] scroll-mt-16 flex-col justify-center overflow-hidden pb-10 pt-20 sm:min-h-[88vh] sm:pb-16 sm:pt-24 lg:pb-20 lg:pt-28"
+          className="relative z-10 flex min-h-[min(78svh,720px)] scroll-mt-16 flex-col justify-end overflow-hidden pb-6 pt-20 sm:min-h-[88vh] sm:justify-center sm:pb-12 sm:pt-24 lg:min-h-[min(100svh,920px)] lg:pb-20 lg:pt-28"
         >
           <div className={cn(LANDING_SHELL, 'relative')}>
-            <div className="grid grid-cols-1 items-center gap-10 lg:grid-cols-[minmax(0,46%)_1fr] lg:gap-8 xl:grid-cols-[minmax(0,36rem)_1fr]">
+            <div className="grid grid-cols-1 items-center gap-6 lg:grid-cols-[minmax(0,46%)_1fr] lg:gap-8 xl:grid-cols-[minmax(0,36rem)_1fr]">
               <motion.div
                 style={{ y: heroContentY }}
                 initial={false}
                 animate={mounted ? { opacity: 1, y: 0 } : false}
                 transition={{ duration: 0.85, ease: 'easeOut', delay: 0.08 }}
-                className="relative z-10 mt-6 space-y-4 pl-4 sm:mt-10 sm:space-y-5 sm:pl-8 lg:mt-14 lg:pl-12 xl:pl-16"
+                className="relative z-10 mt-6 space-y-5 sm:mt-10 lg:mt-14"
               >
                 <motion.p
                   initial={false}
@@ -360,37 +357,34 @@ export function SiteLanding({ user }: SiteLandingProps) {
                   équipez votre cabinet avec un outil clinique moderne.
                 </p>
 
-                <div className="inline-flex w-fit max-w-full flex-nowrap items-center gap-2 overflow-x-auto pt-1 [-ms-overflow-style:none] [scrollbar-width:none] sm:gap-3 [&::-webkit-scrollbar]:hidden">
-                  <motion.div whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.98 }}>
+                <div className="flex w-full max-w-md flex-col gap-3 pt-8 sm:max-w-none sm:flex-row sm:flex-wrap sm:items-center sm:pt-4 lg:pt-6">
+                  <Button
+                    size="lg"
+                    className="h-12 w-full rounded-full border-0 bg-[#111111] px-6 text-sm font-semibold text-white shadow-[0_8px_28px_rgba(15,23,42,0.22)] transition hover:bg-[#2a2a2a] sm:h-11 sm:w-auto"
+                    asChild
+                  >
+                    <Link href="/search" className="inline-flex items-center justify-center gap-2">
+                      Prendre rendez-vous
+                      <ArrowRight className="h-4 w-4 shrink-0" />
+                    </Link>
+                  </Button>
+                  {!user ? (
                     <Button
                       variant="outline"
-                      size="sm"
-                      className="h-10 flex-none rounded-full border-[#111111]/20 bg-white/60 px-3.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#111111] shadow-[0_8px_32px_rgba(183,167,255,0.2)] backdrop-blur-xl transition hover:border-[#B7A7FF]/40 hover:bg-white/80 sm:h-11 sm:px-6 sm:text-[11px] sm:tracking-[0.12em]"
+                      size="lg"
+                      className="h-12 w-full rounded-full border-[#111111]/12 bg-white/75 px-6 text-sm font-semibold text-[#111111] shadow-[0_4px_20px_rgba(126,173,208,0.12)] backdrop-blur-md transition hover:border-[#7EADD0]/40 hover:bg-white sm:h-11 sm:w-auto"
                       asChild
                     >
-                      <Link href="/search" className="inline-flex w-auto flex-none items-center justify-center gap-1.5 whitespace-nowrap">
-                        Prendre rendez-vous
-                        <ArrowRight className="h-3.5 w-3.5 shrink-0" />
-                      </Link>
+                      <Link href="/register">Créer un compte</Link>
                     </Button>
-                  </motion.div>
-                  {!user && (
-                    <motion.div whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.98 }}>
-                      <Link
-                        href="/register"
-                        className="inline-flex h-10 w-auto flex-none items-center justify-center whitespace-nowrap rounded-full border border-white/60 bg-white/40 px-3.5 text-[10px] font-semibold uppercase tracking-wider text-[#555555] shadow-[0_4px_24px_rgba(126,173,208,0.15)] backdrop-blur-xl transition hover:border-[#7EADD0]/50 hover:text-[#111111] sm:h-11 sm:px-5 sm:text-[11px]"
-                      >
-                        Créer un compte
-                      </Link>
-                    </motion.div>
-                  )}
+                  ) : null}
                 </div>
               </motion.div>
 
               <div className="hidden min-h-[min(50vh,420px)] lg:block" aria-hidden />
             </div>
 
-            <div className="mt-6 flex justify-start sm:mt-8 lg:-mt-2 lg:justify-end">
+            <div className="mt-4 hidden justify-center sm:mt-8 sm:flex lg:-mt-2 lg:justify-end">
               <motion.button
                 type="button"
                 initial={false}
@@ -414,7 +408,7 @@ export function SiteLanding({ user }: SiteLandingProps) {
                 }}
                 whileHover={{ scale: 1.04 }}
                 onClick={() => document.getElementById('editorial-01')?.scrollIntoView({ behavior: 'smooth' })}
-                className="inline-flex items-center gap-2.5 rounded-full border border-white/20 bg-[#111111]/90 px-5 py-3 text-xs font-semibold text-white backdrop-blur-md outline-none lg:mr-5 xl:mr-0"
+                className="inline-flex h-11 items-center gap-2.5 rounded-full border border-white/20 bg-[#111111]/90 px-5 text-xs font-semibold text-white backdrop-blur-md outline-none sm:h-auto sm:py-3 lg:mr-5 xl:mr-0"
               >
                 <motion.span animate={mounted ? { y: [0, 3, 0] } : false} transition={{ duration: 1.2, repeat: Infinity }}>
                   <ChevronDown className="h-4 w-4" />
@@ -426,7 +420,7 @@ export function SiteLanding({ user }: SiteLandingProps) {
         </section>
 
         {/* Carte éditoriale glass — alignée sur la grille navbar / 01 */}
-        <section className={cn(LANDING_SHELL, 'relative z-20 -mt-6 pb-16 sm:-mt-10 sm:pb-20 lg:-mt-14 lg:pb-24')}>
+        <section className={cn(LANDING_SHELL, 'relative z-20 mt-8 pb-16 sm:-mt-8 sm:pb-20 lg:-mt-14 lg:pb-24')}>
           <motion.div
             id="editorial-01"
             initial={false}
@@ -489,109 +483,99 @@ export function SiteLanding({ user }: SiteLandingProps) {
           aria-hidden
         />
 
-        <div className="relative grid grid-cols-1 gap-10 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-start lg:gap-x-12 xl:gap-x-16">
-          <motion.span
-            variants={fadeUp}
-            className="bg-gradient-to-b from-[#7EADD0] via-[#B7A7FF] to-[#7EADD0] bg-clip-text text-4xl font-light leading-none tracking-[-0.04em] text-transparent sm:text-5xl lg:pt-1 lg:text-6xl"
-          >
-            02
-          </motion.span>
+        <motion.div variants={fadeUp} className="relative w-full">
+          <GlassPanel tint="blue" className="p-6 sm:p-8 lg:p-10 xl:p-12">
+            <motion.div
+              className="pointer-events-none absolute -right-12 -top-12 h-40 w-40 rounded-full bg-[#7EADD0]/25 blur-[60px]"
+              animate={mounted ? { scale: [1, 1.15, 1], opacity: [0.5, 0.8, 0.5] } : false}
+              transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}
+              aria-hidden
+            />
 
-          <motion.div variants={fadeUp} className="max-w-4xl">
-            <GlassPanel tint="blue" className="p-6 sm:p-8 lg:p-10">
-              <motion.div
-                className="pointer-events-none absolute -right-12 -top-12 h-40 w-40 rounded-full bg-[#7EADD0]/25 blur-[60px]"
-                animate={mounted ? { scale: [1, 1.15, 1], opacity: [0.5, 0.8, 0.5] } : false}
-                transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}
-                aria-hidden
-              />
-
-              <div className="space-y-3">
-                <p className="text-[10px] font-bold uppercase tracking-[0.32em] text-[#7EADD0]">Recherche</p>
-                <h2 className="text-xl font-medium leading-snug tracking-[-0.02em] text-[#111111] sm:text-2xl lg:text-[1.75rem]">
-                  Trouvez un praticien près de chez vous
-                </h2>
-                <p className="max-w-xl text-sm leading-relaxed text-[#77777D] sm:text-[15px]">
-                  Spécialité, ville et disponibilités — en quelques secondes.
-                </p>
-              </div>
-
-              <div className="relative mt-8 overflow-hidden rounded-[20px] border border-white/60 bg-white/45 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] backdrop-blur-xl sm:rounded-[22px] sm:p-5">
-                <div
-                  className="pointer-events-none absolute inset-0 bg-gradient-to-br from-[#7EADD0]/8 via-transparent to-[#B7A7FF]/10"
-                  aria-hidden
-                />
-                <div className="relative z-10">
-                  <LandingSearchBar showCityShortcuts />
-                </div>
-              </div>
-
-              {stats ? (
-                <motion.div
-                  variants={staggerFast}
-                  className="mt-6 grid grid-cols-3 gap-3 sm:gap-4"
-                >
-                  {[
-                    { value: stats.doctors, label: 'Praticiens', tint: 'from-[#7EADD0]/20 to-white/40' },
-                    { value: stats.specialties, label: 'Spécialités', tint: 'from-[#B7A7FF]/20 to-white/40' },
-                    { value: stats.cities, label: 'Villes', tint: 'from-white/50 to-[#7EADD0]/10' },
-                  ].map((item) => (
-                    <motion.div
-                      key={item.label}
-                      variants={scaleInSpring}
-                      className={cn(
-                        'rounded-[18px] border border-white/55 bg-gradient-to-br px-3 py-4 backdrop-blur-md sm:px-4 sm:py-5',
-                        item.tint,
-                      )}
-                    >
-                      <AnimatedStat value={item.value} label={item.label} />
-                    </motion.div>
-                  ))}
-                </motion.div>
-              ) : null}
-
-              {catalogSpecialties.length > 0 ? (
-                <div className="relative mt-6 overflow-hidden rounded-[20px] border border-[#B7A7FF]/20 bg-gradient-to-r from-[#B7A7FF]/10 via-white/35 to-[#7EADD0]/10 p-4 backdrop-blur-lg sm:p-5">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-[#77777D]">Spécialités</p>
-                  <p className="mt-3 text-sm leading-[1.85] text-[#555555]">
-                    {catalogSpecialties.slice(0, 8).map((s, i) => (
-                      <span key={s.code}>
-                        {i > 0 ? <span className="text-[#D8D0FF]"> · </span> : null}
-                        <Link
-                          href={`/search?specialtyCode=${encodeURIComponent(s.code)}`}
-                          className="transition hover:text-[#7EADD0]"
-                        >
-                          {s.name}
-                        </Link>
-                      </span>
-                    ))}
-                    {catalogSpecialties.length > 8 ? (
-                      <>
-                        <span className="text-[#D8D0FF]"> · </span>
-                        <Link href="/search" className="font-medium text-[#111111] transition hover:text-[#B7A7FF]">
-                          +{catalogSpecialties.length - 8} autres
-                        </Link>
-                      </>
-                    ) : null}
+            <div className="min-w-0 space-y-8">
+                <div className="space-y-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.32em] text-[#7EADD0]">Recherche</p>
+                  <h2 className="text-xl font-medium leading-snug tracking-[-0.02em] text-[#111111] sm:text-2xl lg:text-[1.75rem] xl:text-[2rem]">
+                    Trouvez un praticien près de chez vous
+                  </h2>
+                  <p className="max-w-2xl text-sm leading-relaxed text-[#77777D] sm:text-[15px]">
+                    Spécialité, ville et disponibilités — en quelques secondes.
                   </p>
                 </div>
-              ) : null}
 
-              <div className="mt-6 flex flex-col gap-4 border-t border-white/50 pt-6 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-sm text-[#77777D]">Parcourez l&apos;annuaire complet et réservez en ligne.</p>
-                <Link
-                  href="/search"
-                  className="inline-flex w-fit items-center gap-2 rounded-full bg-[#111111]/90 px-5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-white shadow-[0_8px_28px_rgba(126,173,208,0.25)] backdrop-blur-sm transition hover:bg-[#111111] hover:gap-3 sm:text-[12px]"
-                >
-                  Ouvrir l&apos;annuaire
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </Link>
+                <div className="relative overflow-hidden rounded-[20px] border border-white/60 bg-white/45 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] backdrop-blur-xl sm:rounded-[22px] sm:p-5 lg:p-6">
+                  <div
+                    className="pointer-events-none absolute inset-0 bg-gradient-to-br from-[#7EADD0]/8 via-transparent to-[#B7A7FF]/10"
+                    aria-hidden
+                  />
+                  <div className="relative z-10">
+                    <LandingSearchBar showCityShortcuts />
+                  </div>
+                </div>
+
+                {stats ? (
+                  <motion.div variants={staggerFast} className="grid grid-cols-1 gap-3 min-[400px]:grid-cols-3 sm:gap-4 lg:gap-5">
+                    {[
+                      { value: stats.doctors, label: 'Praticiens', tint: 'from-[#7EADD0]/20 to-white/40' },
+                      { value: stats.specialties, label: 'Spécialités', tint: 'from-[#B7A7FF]/20 to-white/40' },
+                      { value: stats.cities, label: 'Villes', tint: 'from-white/50 to-[#7EADD0]/10' },
+                    ].map((item) => (
+                      <motion.div
+                        key={item.label}
+                        variants={scaleInSpring}
+                        className={cn(
+                          'rounded-[18px] border border-white/55 bg-gradient-to-br px-3 py-4 backdrop-blur-md sm:px-4 sm:py-5 lg:px-5 lg:py-6',
+                          item.tint,
+                        )}
+                      >
+                        <AnimatedStat value={item.value} label={item.label} />
+                      </motion.div>
+                    ))}
+                  </motion.div>
+                ) : null}
+
+                {catalogSpecialties.length > 0 ? (
+                  <div className="relative overflow-hidden rounded-[20px] border border-[#B7A7FF]/20 bg-gradient-to-r from-[#B7A7FF]/10 via-white/35 to-[#7EADD0]/10 p-4 backdrop-blur-lg sm:p-5 lg:p-6">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-[#77777D]">Spécialités</p>
+                    <p className="mt-3 text-sm leading-[1.85] text-[#555555] lg:text-[15px]">
+                      {catalogSpecialties.slice(0, 8).map((s, i) => (
+                        <span key={s.code}>
+                          {i > 0 ? <span className="text-[#D8D0FF]"> · </span> : null}
+                          <Link
+                            href={`/search?specialtyCode=${encodeURIComponent(s.code)}`}
+                            className="transition hover:text-[#7EADD0]"
+                          >
+                            {s.name}
+                          </Link>
+                        </span>
+                      ))}
+                      {catalogSpecialties.length > 8 ? (
+                        <>
+                          <span className="text-[#D8D0FF]"> · </span>
+                          <Link href="/search" className="font-medium text-[#111111] transition hover:text-[#B7A7FF]">
+                            +{catalogSpecialties.length - 8} autres
+                          </Link>
+                        </>
+                      ) : null}
+                    </p>
+                  </div>
+                ) : null}
+
+                <div className="flex flex-col gap-4 border-t border-white/50 pt-6 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-sm text-[#77777D]">Parcourez l&apos;annuaire complet et réservez en ligne.</p>
+                  <Link
+                    href="/search"
+                    className="inline-flex w-fit items-center gap-2 rounded-full bg-[#111111]/90 px-5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-white shadow-[0_8px_28px_rgba(126,173,208,0.25)] backdrop-blur-sm transition hover:bg-[#111111] hover:gap-3 sm:text-[12px]"
+                  >
+                    Ouvrir l&apos;annuaire
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
+                </div>
+
+                <ShimmerLine />
               </div>
-
-              <ShimmerLine className="mt-6" />
-            </GlassPanel>
-          </motion.div>
-        </div>
+          </GlassPanel>
+        </motion.div>
       </motion.section>
 
       {/* Annuaire — 03 */}
@@ -604,12 +588,7 @@ export function SiteLanding({ user }: SiteLandingProps) {
         className={cn(LANDING_SHELL, 'relative scroll-mt-20 overflow-hidden border-t border-[#E8EAED]/60 py-16 sm:py-20 lg:py-24')}
       >
         <SectionMesh variant="purple" />
-        <div className="relative grid grid-cols-1 gap-10 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-start lg:gap-x-12 xl:gap-x-16">
-          <motion.span variants={fadeUp} className="bg-gradient-to-b from-[#B7A7FF] to-[#7EADD0] bg-clip-text text-4xl font-light leading-none tracking-[-0.04em] text-transparent sm:text-5xl lg:pt-1 lg:text-6xl">
-            03
-          </motion.span>
-
-          <div className="space-y-10 sm:space-y-12">
+        <div className="relative space-y-10 sm:space-y-12">
             <motion.div variants={fadeUp} className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
               <div className="max-w-2xl space-y-3">
                 <p className="text-[10px] font-bold uppercase tracking-[0.32em] text-[#77777D]">Annuaire</p>
@@ -632,7 +611,7 @@ export function SiteLanding({ user }: SiteLandingProps) {
             {doctorsLoading ? (
               <motion.div variants={fadeUp} className="flex gap-5 overflow-x-auto pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} className="w-[min(88vw,300px)] shrink-0 sm:w-[320px]">
+                  <div key={i} className="w-[min(88vw,320px)] shrink-0 sm:w-[340px]">
                     <DoctorCardSkeleton />
                   </div>
                 ))}
@@ -652,7 +631,7 @@ export function SiteLanding({ user }: SiteLandingProps) {
                     key={d.id}
                     variants={scaleInSpring}
                     whileHover={{ y: -8, scale: 1.02 }}
-                    className="w-[min(88vw,300px)] shrink-0 snap-start sm:w-[320px]"
+                    className="w-[min(88vw,320px)] shrink-0 snap-start sm:w-[340px]"
                   >
                     <DoctorCard doctor={d} className="h-full" compact />
                   </motion.div>
@@ -666,7 +645,6 @@ export function SiteLanding({ user }: SiteLandingProps) {
                 </Button>
               </motion.div>
             )}
-          </div>
         </div>
       </motion.section>
 
@@ -680,12 +658,7 @@ export function SiteLanding({ user }: SiteLandingProps) {
         className={cn(LANDING_SHELL, 'relative scroll-mt-20 overflow-hidden border-t border-[#E8EAED]/60 py-16 sm:py-20 lg:py-24')}
       >
         <SectionMesh variant="mixed" />
-        <div className="relative grid grid-cols-1 gap-10 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-start lg:gap-x-12 xl:gap-x-16">
-          <motion.span variants={fadeUp} className="bg-gradient-to-b from-[#111111] via-[#B7A7FF] to-[#7EADD0] bg-clip-text text-4xl font-light leading-none tracking-[-0.04em] text-transparent sm:text-5xl lg:pt-1 lg:text-6xl">
-            04
-          </motion.span>
-
-          <div className="space-y-10 sm:space-y-12">
+        <div className="relative space-y-10 sm:space-y-12">
             <motion.div variants={fadeUp} className="max-w-2xl space-y-3">
               <p className="text-[10px] font-bold uppercase tracking-[0.32em] text-[#77777D]">Avantages</p>
               <h2 className="text-xl font-medium leading-snug tracking-[-0.02em] text-[#111111] sm:text-2xl lg:text-[1.75rem]">
@@ -695,15 +668,14 @@ export function SiteLanding({ user }: SiteLandingProps) {
 
             <motion.div variants={staggerContainer} className="grid gap-4 sm:grid-cols-3 sm:gap-5">
               {ADVANTAGES.map((item) => (
-                <motion.div key={item.num} variants={scaleInSpring}>
+                <motion.div key={item.title} variants={scaleInSpring}>
                   <GlassPanel tint={item.tint} hover className="flex h-full flex-col p-6 sm:p-7">
                     <span
-                      className="text-3xl font-light tracking-[-0.04em] sm:text-4xl"
-                      style={{ color: item.accent }}
-                    >
-                      {item.num}
-                    </span>
-                    <h3 className="mt-6 text-base font-medium text-[#111111] sm:text-lg">{item.title}</h3>
+                      className="inline-block h-1 w-8 rounded-full"
+                      style={{ backgroundColor: item.accent }}
+                      aria-hidden
+                    />
+                    <h3 className="mt-5 text-base font-medium text-[#111111] sm:text-lg">{item.title}</h3>
                     <p className="mt-2 flex-1 text-sm leading-relaxed text-[#77777D]">{item.desc}</p>
                     <Link
                       href={item.href}
@@ -716,7 +688,6 @@ export function SiteLanding({ user }: SiteLandingProps) {
                 </motion.div>
               ))}
             </motion.div>
-          </div>
         </div>
       </motion.section>
 
@@ -730,12 +701,7 @@ export function SiteLanding({ user }: SiteLandingProps) {
         className={cn(LANDING_SHELL, 'relative scroll-mt-24 overflow-hidden py-16 sm:py-20 lg:py-24')}
       >
         <SectionMesh variant="light" />
-        <div className="relative grid grid-cols-1 gap-10 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-start lg:gap-x-12 xl:gap-x-16">
-          <motion.span variants={fadeUp} className="bg-gradient-to-b from-[#B7A7FF] to-[#7EADD0] bg-clip-text text-4xl font-light leading-none tracking-[-0.04em] text-transparent sm:text-5xl lg:pt-1 lg:text-6xl">
-            05
-          </motion.span>
-
-          <div className="space-y-10 sm:space-y-12">
+        <div className="relative space-y-10 sm:space-y-12">
             <motion.div variants={fadeUp} className="max-w-2xl space-y-3">
               <p className="text-[10px] font-bold uppercase tracking-[0.32em] text-[#77777D]">Parcours</p>
               <h2 className="text-xl font-medium leading-snug tracking-[-0.02em] text-[#111111] sm:text-2xl lg:text-[1.75rem]">
@@ -777,7 +743,7 @@ export function SiteLanding({ user }: SiteLandingProps) {
                             : 'border border-[#E8EAED] bg-white/60 text-[#77777D] backdrop-blur-sm',
                         )}
                       >
-                        {String(i + 1).padStart(2, '0')}
+                        {i + 1}
                       </motion.span>
                       <p className={cn('text-sm font-medium transition', active ? 'text-[#111111]' : 'text-[#77777D]')}>
                         {step.title}
@@ -798,7 +764,7 @@ export function SiteLanding({ user }: SiteLandingProps) {
                 >
                   <GlassPanel tint="blue" className="p-6 sm:p-8">
                     <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-[#7EADD0]">
-                      Étape {String(timelineStep + 1).padStart(2, '0')}
+                      Étape {timelineStep + 1}
                     </p>
                     <h3 className="mt-3 text-lg font-medium text-[#111111] sm:text-xl">
                       {TIMELINE_STEPS[timelineStep].title}
@@ -849,7 +815,6 @@ export function SiteLanding({ user }: SiteLandingProps) {
                 </Link>
               </GlassPanel>
             </motion.div>
-          </div>
         </div>
       </motion.section>
 
@@ -863,12 +828,7 @@ export function SiteLanding({ user }: SiteLandingProps) {
         className={cn(LANDING_SHELL, 'relative scroll-mt-24 overflow-hidden border-t border-[#E8EAED]/60 py-16 sm:py-20 lg:py-24')}
       >
         <SectionMesh variant="mixed" />
-        <div className="relative grid grid-cols-1 gap-10 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-start lg:gap-x-12 xl:gap-x-16">
-          <motion.span variants={fadeUp} className="bg-gradient-to-b from-[#7EADD0] to-[#B7A7FF] bg-clip-text text-4xl font-light leading-none tracking-[-0.04em] text-transparent sm:text-5xl lg:pt-1 lg:text-6xl">
-            06
-          </motion.span>
-
-          <div className="space-y-10 sm:space-y-12">
+        <div className="relative space-y-10 sm:space-y-12">
             <motion.div variants={fadeUp} className="max-w-2xl space-y-3">
               <p className="text-[10px] font-bold uppercase tracking-[0.32em] text-[#77777D]">Plateforme</p>
               <h2 className="text-xl font-medium leading-snug tracking-[-0.02em] text-[#111111] sm:text-2xl lg:text-[1.75rem]">
@@ -932,7 +892,6 @@ export function SiteLanding({ user }: SiteLandingProps) {
               </Link>
               </GlassPanel>
             </motion.div>
-          </div>
         </div>
       </motion.section>
 
@@ -946,12 +905,7 @@ export function SiteLanding({ user }: SiteLandingProps) {
         className={cn(LANDING_SHELL, 'relative scroll-mt-24 overflow-hidden border-t border-[#E8EAED]/60 py-16 sm:py-20 lg:py-24')}
       >
         <SectionMesh variant="purple" />
-        <div className="relative grid grid-cols-1 gap-10 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-start lg:gap-x-12 xl:gap-x-16">
-          <motion.span variants={fadeUp} className="bg-gradient-to-b from-[#B7A7FF] to-[#111111] bg-clip-text text-4xl font-light leading-none tracking-[-0.04em] text-transparent sm:text-5xl lg:pt-1 lg:text-6xl">
-            07
-          </motion.span>
-
-          <div className="space-y-8 sm:space-y-10">
+        <div className="relative space-y-8 sm:space-y-10">
             <motion.div variants={fadeUp} className="flex items-end justify-between gap-4">
               <div className="max-w-2xl space-y-3">
                 <p className="text-[10px] font-bold uppercase tracking-[0.32em] text-[#77777D]">Témoignages</p>
@@ -1016,7 +970,6 @@ export function SiteLanding({ user }: SiteLandingProps) {
                 );
               })}
             </div>
-          </div>
         </div>
       </motion.section>
 
@@ -1029,12 +982,7 @@ export function SiteLanding({ user }: SiteLandingProps) {
         variants={staggerContainer}
         className={cn(LANDING_SHELL, 'scroll-mt-24 border-t border-[#E8EAED] bg-[#F8F8F6] py-16 sm:py-20 lg:py-24')}
       >
-        <div className="grid grid-cols-1 gap-10 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-start lg:gap-x-12 xl:gap-x-16">
-          <motion.span variants={fadeUp} className="text-4xl font-light leading-none tracking-[-0.04em] text-[#111111] sm:text-5xl lg:pt-1 lg:text-6xl">
-            08
-          </motion.span>
-
-          <div className="space-y-10 sm:space-y-12">
+        <div className="space-y-10 sm:space-y-12">
             <motion.div variants={fadeUp} className="max-w-2xl space-y-3">
               <p className="text-[10px] font-bold uppercase tracking-[0.32em] text-[#77777D]">Cabinets</p>
               <h2 className="text-xl font-medium leading-snug tracking-[-0.02em] text-[#111111] sm:text-2xl lg:text-[1.75rem]">
@@ -1098,7 +1046,6 @@ export function SiteLanding({ user }: SiteLandingProps) {
                 </Link>
               </Button>
             </motion.div>
-          </div>
         </div>
       </motion.section>
 
@@ -1111,12 +1058,7 @@ export function SiteLanding({ user }: SiteLandingProps) {
         variants={staggerContainer}
         className={cn(LANDING_SHELL, 'scroll-mt-24 border-t border-[#E8EAED] bg-white py-16 sm:py-20 lg:py-24')}
       >
-        <div className="grid grid-cols-1 gap-10 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-start lg:gap-x-12 xl:gap-x-16">
-          <motion.span variants={fadeUp} className="text-4xl font-light leading-none tracking-[-0.04em] text-[#111111] sm:text-5xl lg:pt-1 lg:text-6xl">
-            09
-          </motion.span>
-
-          <div className="space-y-8 sm:space-y-10">
+        <div className="space-y-8 sm:space-y-10">
             <motion.div variants={fadeUp} className="max-w-2xl space-y-3">
               <p className="text-[10px] font-bold uppercase tracking-[0.32em] text-[#77777D]">FAQ</p>
               <h2 className="text-xl font-medium leading-snug tracking-[-0.02em] text-[#111111] sm:text-2xl lg:text-[1.75rem]">
@@ -1128,7 +1070,6 @@ export function SiteLanding({ user }: SiteLandingProps) {
                 <LandingFaq />
               </GlassPanel>
             </motion.div>
-          </div>
         </div>
       </motion.section>
 

@@ -5,6 +5,7 @@ const frontendRoot = path.resolve(__dirname);
 
 /** Monorepo : ancrer Turbopack sur frontend/ (évite routes 404 si cwd = racine du dépôt). */
 const nextConfig: NextConfig = {
+  output: 'standalone',
   turbopack: {
     root: frontendRoot,
   },

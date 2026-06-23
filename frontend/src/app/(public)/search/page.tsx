@@ -2,12 +2,15 @@
 
 import { useCallback, useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { SlidersHorizontal } from 'lucide-react';
 import { SearchFilters } from '@/components/search/search-filters';
 import { SearchResults } from '@/components/search/search-results';
 import { FilterSidebar } from '@/components/search/filter-sidebar';
 import { useSearch } from '@/hooks/use-search';
 import { LANDING_SHELL } from '@/components/marketing/landing-layout';
 import { GlassPanel } from '@/components/marketing/landing-visuals';
+import { Button } from '@/components/ui/button';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import type { SearchFilters as SearchFiltersType } from '@/types/search';
 
@@ -91,13 +94,39 @@ function SearchPageInner() {
           </div>
         ) : null}
 
-        <div className="grid grid-cols-1 gap-10 lg:grid-cols-12 lg:gap-12">
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-12 lg:gap-12">
           <div className="lg:col-span-3">
-            <FilterSidebar
-              onApplyFilters={(f) => void runSearch(f)}
-              isLoading={isLoading}
-              initialFilters={lastFilters}
-            />
+            <div className="mb-4 lg:hidden">
+              <Sheet>
+                <SheetTrigger
+                  render={
+                    <Button variant="outline" className="w-full justify-center gap-2 rounded-xl border-[#E8EAED]">
+                      <SlidersHorizontal className="h-4 w-4" />
+                      Filtres avancés
+                    </Button>
+                  }
+                />
+                <SheetContent side="bottom" className="max-h-[85vh] overflow-y-auto rounded-t-2xl">
+                  <SheetHeader>
+                    <SheetTitle>Filtres</SheetTitle>
+                  </SheetHeader>
+                  <div className="px-1 pb-6">
+                    <FilterSidebar
+                      onApplyFilters={(f) => void runSearch(f)}
+                      isLoading={isLoading}
+                      initialFilters={lastFilters}
+                    />
+                  </div>
+                </SheetContent>
+              </Sheet>
+            </div>
+            <div className="hidden lg:block">
+              <FilterSidebar
+                onApplyFilters={(f) => void runSearch(f)}
+                isLoading={isLoading}
+                initialFilters={lastFilters}
+              />
+            </div>
           </div>
           <div className="lg:col-span-9">
             <SearchResults

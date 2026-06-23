@@ -1,6 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
+import { useState } from 'react';
 import { useAuth, useRequireAuth } from '@/hooks/use-auth';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -12,6 +13,7 @@ import {
   FolderOpen,
   Home,
   LogOut,
+  Menu,
   MessageSquare,
   Receipt,
   Search,
@@ -20,6 +22,7 @@ import {
   UserCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import { APP_CONFIG } from '@/lib/constants/app-config';
 import { PatientNotificationBell } from '@/components/patient/patient-notification-bell';
@@ -36,6 +39,14 @@ const sidebarNav = [
   { href: '/dashboard/patient/medical-records', label: 'Dossier médical', short: 'Dossier', icon: FileText },
   { href: '/dashboard/patient/profile', label: 'Profil santé', short: 'Profil', icon: UserCircle },
 ] as const;
+
+const mobilePrimaryNav = [
+  sidebarNav[0],
+  sidebarNav[1],
+  sidebarNav[3],
+  sidebarNav[4],
+] as const;
+const mobileMoreNav = [sidebarNav[2], ...sidebarNav.slice(5)];
 
 function initials(first?: string | null, last?: string | null, email?: string | null) {
   const a = (first?.[0] || '').toUpperCase();
@@ -55,6 +66,7 @@ export default function PatientSectionLayout({ children }: { children: ReactNode
   useRequireAuth();
   const { user, isLoading } = useAuth();
   const pathname = usePathname();
+  const [moreOpen, setMoreOpen] = useState(false);
 
   if (isLoading) {
     return (
@@ -89,19 +101,29 @@ export default function PatientSectionLayout({ children }: { children: ReactNode
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-slate-100 pb-20 md:pb-0">
+    <div className="flex min-h-[100dvh] flex-col bg-slate-100 pb-[calc(4.25rem+env(safe-area-inset-bottom,0px))] md:pb-0">
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white shadow-sm">
-        <div className="flex h-14 w-full items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
-          <div className="flex min-w-0 items-center gap-3">
-            <Link href="/dashboard/patient" className="flex shrink-0 items-center gap-2.5">
-              <div className="leading-tight">
-                <p className="text-sm font-semibold text-slate-900">{APP_CONFIG.APP_NAME}</p>
+        <div className="flex h-14 w-full items-center justify-between gap-2 px-3 sm:gap-3 sm:px-6 lg:px-8">
+          <div className="flex min-w-0 items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 shrink-0 rounded-lg text-slate-600 md:hidden"
+              onClick={() => setMoreOpen(true)}
+              aria-label="Ouvrir la navigation"
+            >
+              <Menu className="h-5 w-5" />
+            </Button>
+            <Link href="/dashboard/patient" className="flex min-w-0 shrink items-center gap-2">
+              <div className="min-w-0 leading-tight">
+                <p className="truncate text-sm font-semibold text-slate-900">{APP_CONFIG.APP_NAME}</p>
                 <p className="text-[10px] font-medium uppercase tracking-wider text-slate-500">Portail patient</p>
               </div>
             </Link>
           </div>
 
-          <div className="flex min-w-0 items-center gap-1 sm:gap-2">
+          <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
             <Button variant="ghost" size="icon" className="rounded-lg text-slate-600 md:hidden" asChild>
               <Link href="/search" aria-label="Rechercher un praticien">
                 <Search className="h-5 w-5" />
@@ -129,7 +151,7 @@ export default function PatientSectionLayout({ children }: { children: ReactNode
               type="button"
               variant="outline"
               size="sm"
-              className="rounded-lg border-slate-200 px-2.5 text-slate-700"
+              className="hidden rounded-lg border-slate-200 px-2.5 text-slate-700 sm:inline-flex"
               onClick={() => signOut({ callbackUrl: '/' })}
             >
               <LogOut className="h-4 w-4 sm:mr-1.5" />
@@ -138,6 +160,48 @@ export default function PatientSectionLayout({ children }: { children: ReactNode
           </div>
         </div>
       </header>
+
+      <Sheet open={moreOpen} onOpenChange={setMoreOpen}>
+        <SheetContent side="left" className="w-[min(100vw,20rem)] gap-0 p-0 sm:max-w-xs">
+          <SheetHeader className="border-b border-slate-100 px-4 py-3">
+            <SheetTitle className="text-left text-sm font-semibold">Navigation</SheetTitle>
+          </SheetHeader>
+          <nav className="flex flex-col gap-0.5 p-3">
+            {sidebarNav.map((item) => {
+              const { href, label, icon: Icon } = item;
+              const exact = 'exact' in item ? item.exact : false;
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  onClick={() => setMoreOpen(false)}
+                  className={linkClass(href, exact)}
+                >
+                  <Icon
+                    className={cn(
+                      'h-4 w-4 shrink-0',
+                      isActive(pathname, href, exact) ? 'text-blue-600' : 'text-slate-400 group-hover:text-slate-600',
+                    )}
+                    strokeWidth={2}
+                  />
+                  {label}
+                </Link>
+              );
+            })}
+          </nav>
+          <div className="mt-auto border-t border-slate-100 p-3">
+            <Button
+              type="button"
+              variant="ghost"
+              className="w-full justify-start gap-2 text-slate-600"
+              onClick={() => signOut({ callbackUrl: '/' })}
+            >
+              <LogOut className="h-4 w-4" />
+              Déconnexion
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <div className="flex w-full flex-1">
         <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-56 shrink-0 overflow-y-auto border-r border-slate-200 bg-white p-3 md:block lg:w-64 lg:p-4 xl:w-72">
@@ -165,8 +229,10 @@ export default function PatientSectionLayout({ children }: { children: ReactNode
         <main className="min-h-[calc(100vh-3.5rem)] min-w-0 flex-1">{children}</main>
       </div>
 
-      <nav className="fixed bottom-0 left-0 right-0 z-40 flex h-16 items-stretch overflow-x-auto border-t border-slate-200 bg-white shadow-[0_-4px_24px_rgba(15,23,42,0.06)] md:hidden">
-        {sidebarNav.slice(0, 6).map((item) => {
+      <nav
+        className="fixed bottom-0 left-0 right-0 z-40 flex h-[calc(4.25rem+env(safe-area-inset-bottom,0px))] items-stretch border-t border-slate-200 bg-white pb-[env(safe-area-inset-bottom,0px)] shadow-[0_-4px_24px_rgba(15,23,42,0.06)] md:hidden"
+      >
+        {mobilePrimaryNav.map((item) => {
           const { href, short, icon: Icon } = item;
           const exact = 'exact' in item ? item.exact : false;
           const active = isActive(pathname, href, exact);
@@ -175,7 +241,7 @@ export default function PatientSectionLayout({ children }: { children: ReactNode
               key={href}
               href={href}
               className={cn(
-                'flex min-w-[4.25rem] flex-1 flex-col items-center justify-center gap-0.5 px-1 text-[10px] font-medium',
+                'flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-1 text-[10px] font-medium',
                 active ? 'text-blue-700' : 'text-slate-500',
               )}
             >
@@ -184,6 +250,23 @@ export default function PatientSectionLayout({ children }: { children: ReactNode
             </Link>
           );
         })}
+        <button
+          type="button"
+          onClick={() => setMoreOpen(true)}
+          className={cn(
+            'flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 px-1 text-[10px] font-medium',
+            mobileMoreNav.some((item) => {
+              const exact = 'exact' in item ? item.exact : false;
+              return isActive(pathname, item.href, exact);
+            })
+              ? 'text-blue-700'
+              : 'text-slate-500',
+          )}
+          aria-label="Plus d'options"
+        >
+          <Menu className="h-5 w-5" strokeWidth={2} />
+          <span>Plus</span>
+        </button>
       </nav>
     </div>
   );

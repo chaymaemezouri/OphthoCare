@@ -1,15 +1,21 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { format } from "date-fns";
 import { fr } from "date-fns/locale";
-import { AppSidebar } from "./sidebar";
+import {
+  AppSidebar,
+  DashboardMobileBottomNav,
+  SidebarNavContent,
+  type DashboardRole,
+} from "./sidebar";
 import {
   Bell,
   Calendar,
   ClipboardList,
   LogOut,
+  Menu,
   MessageSquare,
   Search,
   Settings,
@@ -27,6 +33,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { signOut } from "next-auth/react";
@@ -35,7 +42,7 @@ import { DOCTOR_ACCENT_BTN, DOCTOR_OUTLINE_BTN } from "@/components/doctor/docto
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
-  role: "medecin" | "secretaire" | "admin" | "stagiaire";
+  role: DashboardRole;
 }
 
 function initials(first?: string | null, last?: string | null, email?: string | null) {
@@ -49,6 +56,7 @@ function initials(first?: string | null, last?: string | null, email?: string | 
 
 export function DashboardLayout({ children, role }: DashboardLayoutProps) {
   const { user } = useAuth();
+  const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
   const isDoctorSpace = role === "medecin";
   const todayLabel = format(new Date(), "EEEE d MMMM yyyy", { locale: fr });
 
@@ -64,15 +72,27 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
         ? "/dashboard/secretaire/settings"
         : "/account";
 
+  const closeMobileMenu = () => setMobileMenuOpen(false);
+
   return (
     <div
       className={cn(
-        "flex h-screen overflow-hidden font-sans antialiased",
+        "flex h-[100dvh] overflow-hidden font-sans antialiased",
         isDoctorSpace ? "bg-slate-100 text-slate-900" : "bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100",
       )}
     >
       <CommandPalette />
       <AppSidebar role={role} />
+
+      <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
+        <SheetContent side="left" className="w-[min(100vw,20rem)] gap-0 p-0 sm:max-w-xs">
+          <SheetHeader className="sr-only">
+            <SheetTitle>Navigation</SheetTitle>
+          </SheetHeader>
+          <SidebarNavContent role={role} onNavigate={closeMobileMenu} className="h-full" />
+        </SheetContent>
+      </Sheet>
+
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <header
           className={cn(
@@ -81,8 +101,20 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
           )}
         >
           {isDoctorSpace ? (
-            <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-2 sm:px-6 lg:px-8">
-              <p className="truncate text-xs capitalize text-slate-500">{todayLabel}</p>
+            <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-2 sm:gap-3 sm:px-6 lg:px-8">
+              <div className="flex min-w-0 items-center gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 shrink-0 rounded-md text-slate-600 md:hidden"
+                  onClick={() => setMobileMenuOpen(true)}
+                  aria-label="Ouvrir le menu"
+                >
+                  <Menu className="h-5 w-5" />
+                </Button>
+                <p className="truncate text-xs capitalize text-slate-500">{todayLabel}</p>
+              </div>
               <div className="hidden items-center gap-1.5 md:flex">
                 <Button variant="outline" size="sm" className={cn("h-8 text-xs", DOCTOR_OUTLINE_BTN)} asChild>
                   <Link href="/dashboard/medecin/agenda">
@@ -106,7 +138,20 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
             </div>
           ) : null}
 
-          <div className="flex h-12 items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
+          <div className="flex h-12 items-center justify-between gap-2 px-3 sm:gap-3 sm:px-6 lg:px-8">
+            {!isDoctorSpace ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 shrink-0 rounded-md text-slate-600 md:hidden"
+                onClick={() => setMobileMenuOpen(true)}
+                aria-label="Ouvrir le menu"
+              >
+                <Menu className="h-5 w-5" />
+              </Button>
+            ) : null}
+
             <div className="relative min-w-0 flex-1 max-w-lg">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <Input
@@ -115,7 +160,7 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
               />
             </div>
 
-            <div className="flex shrink-0 items-center gap-1">
+            <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
               {role === "medecin" || role === "secretaire" ? (
                 <MessagingUnreadBadge
                   href={`/dashboard/${role === "medecin" ? "medecin" : "secretaire"}/comm`}
@@ -134,7 +179,7 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
-                    <Button variant="ghost" className="h-9 gap-2 rounded-md px-2 hover:bg-slate-50">
+                    <Button variant="ghost" className="h-9 gap-2 rounded-md px-1.5 hover:bg-slate-50 sm:px-2">
                       <Avatar className="h-7 w-7 rounded-md border border-slate-200">
                         <AvatarFallback
                           className={cn(
@@ -178,17 +223,42 @@ export function DashboardLayout({ children, role }: DashboardLayoutProps) {
               </DropdownMenu>
             </div>
           </div>
+
+          {isDoctorSpace ? (
+            <div className="flex gap-1.5 overflow-x-auto border-t border-slate-100 px-3 py-2 md:hidden">
+              <Button variant="outline" size="sm" className={cn("h-8 shrink-0 text-xs", DOCTOR_OUTLINE_BTN)} asChild>
+                <Link href="/dashboard/medecin/agenda">
+                  <Calendar className="mr-1 h-3.5 w-3.5" />
+                  Agenda
+                </Link>
+              </Button>
+              <Button variant="outline" size="sm" className={cn("h-8 shrink-0 text-xs", DOCTOR_OUTLINE_BTN)} asChild>
+                <Link href="/dashboard/medecin/consultations">
+                  <ClipboardList className="mr-1 h-3.5 w-3.5" />
+                  File
+                </Link>
+              </Button>
+              <Button size="sm" className={cn("h-8 shrink-0 text-xs", DOCTOR_ACCENT_BTN)} asChild>
+                <Link href="/dashboard/medecin/patients">
+                  <Stethoscope className="mr-1 h-3.5 w-3.5" />
+                  Patients
+                </Link>
+              </Button>
+            </div>
+          ) : null}
         </header>
 
         <div
           className={cn(
-            "custom-scrollbar flex-1 overflow-y-auto",
-            isDoctorSpace ? "bg-slate-100" : "bg-[#FDFDFD] p-8 lg:p-10",
+            "custom-scrollbar flex-1 overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom,0px))] md:pb-0",
+            isDoctorSpace ? "bg-slate-100" : "bg-[#FDFDFD] p-4 sm:p-6 lg:p-8 xl:p-10",
           )}
         >
           {children}
         </div>
       </main>
+
+      <DashboardMobileBottomNav role={role} onOpenMenu={() => setMobileMenuOpen(true)} />
     </div>
   );
 }

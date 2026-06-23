@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { Search, MapPin, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { SpecialtyPicker } from '@/components/search/specialty-picker';
 import {
   DropdownMenu,
@@ -56,6 +57,7 @@ export function LandingHeader({
   const [specialtyCode, setSpecialtyCode] = useState('');
   const [city, setCity] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
     void specialtiesApi
@@ -110,6 +112,7 @@ export function LandingHeader({
   ];
 
   const handleNav = (item: (typeof navItems)[number]) => {
+    setMobileNavOpen(false);
     if (item.href === '/search' || !isHome) {
       router.push(item.href);
       return;
@@ -132,14 +135,37 @@ export function LandingHeader({
           aria-hidden
         />
       ) : null}
-      <div className={cn(LANDING_SHELL, 'relative flex h-14 items-center justify-between sm:h-16')}>
-        <div className="flex min-w-0 items-center gap-4 sm:gap-6 md:gap-8">
-          <Link href="/" className="text-sm font-bold tracking-[0.12em] text-[#111111] transition-opacity hover:opacity-70">
+      <div className={cn(LANDING_SHELL, 'relative flex h-14 items-center justify-between gap-2 sm:h-16 sm:gap-3')}>
+        <div className="flex min-w-0 items-center gap-3 sm:gap-6 md:gap-8">
+          <Link href="/" className="truncate text-sm font-bold tracking-[0.12em] text-[#111111] transition-opacity hover:opacity-70">
             {APP_CONFIG.APP_NAME}
           </Link>
 
+          <nav className="hidden items-center gap-6 lg:flex">
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => handleNav(item)}
+                className="text-xs font-medium text-[#77777D] transition-colors hover:text-[#111111]"
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+
+          <button
+            type="button"
+            onClick={() => setMobileNavOpen(true)}
+            className="inline-flex items-center gap-2.5 text-xs font-medium text-[#111111] outline-none transition-opacity hover:opacity-70 md:hidden"
+            aria-label="Ouvrir le menu"
+          >
+            <MenuLinesIcon />
+            <span>Menu</span>
+          </button>
+
           <DropdownMenu>
-            <DropdownMenuTrigger className="inline-flex items-center gap-2.5 text-xs font-medium text-[#111111] outline-none transition-opacity hover:opacity-70">
+            <DropdownMenuTrigger className="hidden items-center gap-2.5 text-xs font-medium text-[#111111] outline-none transition-opacity hover:opacity-70 md:inline-flex lg:hidden">
               <MenuLinesIcon />
               <span>Menu</span>
             </DropdownMenuTrigger>
@@ -161,7 +187,7 @@ export function LandingHeader({
           </DropdownMenu>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2 sm:gap-3 md:gap-4">
+        <div className="flex shrink-0 items-center gap-1.5 sm:gap-3 md:gap-4">
           <button
             type="button"
             onClick={() => setSearchOpen((v) => !v)}
@@ -185,14 +211,14 @@ export function LandingHeader({
               <Button
                 size="xs"
                 variant="ghost"
-                className="h-8 rounded-full border-0 px-2.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#111111] shadow-none hover:bg-[#111111]/5 sm:px-3"
+                className="h-8 rounded-full border-0 px-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-[#111111] shadow-none hover:bg-[#111111]/5 sm:px-3"
                 asChild
               >
                 <Link href="/login?intent=patient">Patient</Link>
               </Button>
               <Button
                 size="xs"
-                className="h-8 rounded-full border-0 bg-[#111111] px-2.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-white shadow-none hover:bg-[#333333] sm:px-3"
+                className="h-8 rounded-full border-0 bg-[#111111] px-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-white shadow-none hover:bg-[#333333] sm:px-3"
                 asChild
               >
                 <Link href="/login?intent=pro">Cabinet</Link>
@@ -201,6 +227,48 @@ export function LandingHeader({
           )}
         </div>
       </div>
+
+      <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+        <SheetContent side="left" className="w-[min(100vw,18rem)] gap-0 p-0 sm:max-w-xs">
+          <SheetHeader className="flex flex-row items-center justify-between border-b border-[#E8EAED] px-4 py-4">
+            <SheetTitle className="text-sm font-bold tracking-[0.12em]">{APP_CONFIG.APP_NAME}</SheetTitle>
+          </SheetHeader>
+          <nav className="flex flex-col p-2">
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => handleNav(item)}
+                className="rounded-lg px-4 py-3 text-left text-sm font-medium text-[#555555] transition-colors hover:bg-[#F8F8F6] hover:text-[#111111]"
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+          {!user ? (
+            <div className="mt-auto flex flex-col gap-2 border-t border-[#E8EAED] p-4">
+              <Button variant="outline" className="w-full rounded-full" asChild>
+                <Link href="/login?intent=patient" onClick={() => setMobileNavOpen(false)}>
+                  Espace patient
+                </Link>
+              </Button>
+              <Button className="w-full rounded-full bg-[#111111] hover:bg-[#333333]" asChild>
+                <Link href="/login?intent=pro" onClick={() => setMobileNavOpen(false)}>
+                  Espace cabinet
+                </Link>
+              </Button>
+            </div>
+          ) : (
+            <div className="mt-auto border-t border-[#E8EAED] p-4">
+              <Button variant="outline" className="w-full rounded-full" asChild>
+                <Link href={dashboardPathForRole(user.role)} onClick={() => setMobileNavOpen(false)}>
+                  Mon espace
+                </Link>
+              </Button>
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
 
       {searchOpen ? (
         <div className={cn(LANDING_SHELL, 'relative py-2 sm:py-2.5')}>

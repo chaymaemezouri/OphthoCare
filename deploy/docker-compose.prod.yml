@@ -1,0 +1,100 @@
+# Production VPS — sans domaine : accès via http://IP:3000 (front) et :3001 (API)
+# Depuis ce dossier : docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ophthocare
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ophthocare
+
+  api:
+    build:
+      context: ../Backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports:
+      - '3001:3001'
+    volumes:
+      - api_uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ophthocare
+
+  web:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+        NEXT_PUBLIC_ENABLE_VIDEO_CONSULTATION: ${NEXT_PUBLIC_ENABLE_VIDEO_CONSULTATION:-true}
+        NEXT_PUBLIC_ENABLE_AI_FEATURES: ${NEXT_PUBLIC_ENABLE_AI_FEATURES:-false}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      AUTH_TRUST_HOST: 'true'
+    ports:
+      - '3000:3000'
+    depends_on:
+      - api
+    networks:
+      - ophthocare
+
+  # Comptes démo : docker compose -f docker-compose.prod.yml --env-file .env --profile seed run --rm seed
+  seed:
+    build:
+      context: ../Backend
+      dockerfile: Dockerfile
+      target: seed
+    profiles: ['seed']
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+    networks:
+      - ophthocare
+
+volumes:
+  postgres_data:
+  redis_data:
+  api_uploads:
+
+networks:
+  ophthocare:
+    driver: bridge

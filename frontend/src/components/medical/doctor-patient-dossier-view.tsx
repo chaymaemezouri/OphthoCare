@@ -330,7 +330,7 @@ export function DoctorPatientDossierView({
   const timelineRows = buildTimelineRows(appts, clinical, audits);
 
   const tabTriggerClass =
-    'rounded-none border-b-2 border-transparent px-3 py-2.5 text-sm font-medium text-slate-600 data-active:border-cyan-600 data-active:text-slate-900';
+    'shrink-0 whitespace-nowrap rounded-none border-b-2 border-transparent px-3 py-2.5 text-sm font-medium text-slate-600 data-active:border-cyan-600 data-active:text-slate-900';
 
   return (
     <DashboardLayout role={layoutRole}>
@@ -385,7 +385,7 @@ export function DoctorPatientDossierView({
           ) : null}
 
           <Tabs value={activeTab} onValueChange={(v) => setTab(v as DossierTab)} className="min-w-0">
-            <TabsList className="h-auto w-full justify-start gap-0 rounded-none border-b border-slate-200 bg-transparent p-0">
+            <TabsList className="h-auto w-full justify-start gap-0 overflow-x-auto rounded-none border-b border-slate-200 bg-transparent p-0 scrollbar-none">
               <TabsTrigger value="timeline" className={tabTriggerClass}>
                 <History className="mr-1.5 h-4 w-4" />
                 Parcours

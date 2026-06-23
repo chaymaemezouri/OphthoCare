@@ -37,7 +37,7 @@ export default function MedecinSettingsLayout({ children }: { children: React.Re
           description="Profil, équipe, lieux d'exercice et tarification."
           variant="compact"
         />
-        <nav className="flex flex-wrap gap-1 border-b border-slate-200">
+        <nav className="-mx-4 flex gap-1 overflow-x-auto border-b border-slate-200 px-4 scrollbar-none sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
           {tabs.map((t) => {
             const base = t.href.split("#")[0];
             const tabHash = t.href.includes("#") ? t.href.slice(t.href.indexOf("#")) : "";
@@ -47,7 +47,7 @@ export default function MedecinSettingsLayout({ children }: { children: React.Re
                 key={t.href}
                 href={t.href}
                 className={cn(
-                  "-mb-px rounded-t-lg border-b-2 px-4 py-2.5 text-sm font-medium transition-colors",
+                  "-mb-px shrink-0 rounded-t-lg border-b-2 px-3 py-2.5 text-sm font-medium transition-colors sm:px-4",
                   active
                     ? "border-cyan-600 text-cyan-800 bg-white"
                     : "border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50",

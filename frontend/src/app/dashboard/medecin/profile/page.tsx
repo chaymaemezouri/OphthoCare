@@ -451,7 +451,7 @@ export default function MedecinProfilePage() {
 
           <div className="flex flex-wrap items-center gap-2">
             {doctor?.isVerified ? (
-              <Badge className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-900 ring-1 ring-emerald-200/80">
+              <Badge className="rounded-full bg-cyan-50 px-2.5 py-0.5 text-xs font-medium text-cyan-950 ring-1 ring-cyan-200/80">
                 <CheckCircle2 className="mr-1 inline h-3.5 w-3.5" aria-hidden />
                 Profil vérifié
               </Badge>
