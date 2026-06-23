@@ -1,7 +1,9 @@
 export const APP_CONFIG = {
   APP_NAME: 'OphthoCare',
-  APP_DESCRIPTION: 'Plateforme Médicale Universelle',
+  APP_DESCRIPTION: 'Plateforme de santé pour patients et cabinets médicaux',
   APP_VERSION: '0.1.0',
+  /** Contact commercial / onboarding praticiens */
+  PRO_CONTACT_EMAIL: 'partenaires@ophthocare.app',
 
   // Pagination
   PAGINATION: {

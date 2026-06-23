@@ -1,4 +1,11 @@
+import 'reflect-metadata';
+
 import { NestFactory } from '@nestjs/core';
+import { IoAdapter } from '@nestjs/platform-socket.io';
+import { ExpressAdapter } from '@nestjs/platform-express';
+import type { NestExpressApplication } from '@nestjs/platform-express';
+import express from 'express';
+import { join } from 'path';
 import { SwaggerModule, DocumentBuilder, SwaggerCustomOptions } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from '@/common/filters/http-exception.filter';
@@ -6,7 +13,12 @@ import { TransformInterceptor } from '@/common/interceptors/transform.intercepto
 import { AppValidationPipe } from '@/common/pipes/validation.pipe';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const server = express();
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, new ExpressAdapter(server));
+  app.useWebSocketAdapter(new IoAdapter(app));
+
+  const uploadRoot = join(process.cwd(), 'uploads');
+  app.useStaticAssets(uploadRoot, { prefix: '/uploads/' });
 
   // Global Pipes
   app.useGlobalPipes(new AppValidationPipe());
@@ -20,7 +32,7 @@ async function bootstrap() {
     origin: process.env.CORS_ORIGIN?.split(',') || ['http://localhost:3000'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
   });
 
   // Swagger / API Documentation
@@ -41,8 +53,8 @@ async function bootstrap() {
 
   const port = process.env.PORT || 3001;
   await app.listen(port);
-  console.log(`🚀 OphthoCare Backend running on http://localhost:${port}`);
-  console.log(`📚 Swagger API Documentation on http://localhost:${port}/api`);
+  console.log(`OphthoCare API: http://localhost:${port}`);
+  console.log(`Swagger: http://localhost:${port}/api`);
 }
 
 bootstrap();

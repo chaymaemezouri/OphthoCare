@@ -236,9 +236,9 @@ npm run lint
 # Format
 npm run format
 
-# Migrations
-npm run typeorm:migration:generate src/database/migrations/name
-npm run typeorm:migration:run
+# Migrations (Prisma)
+npm run prisma:migrate
+npm run prisma:push
 ```
 
 ---
@@ -247,7 +247,7 @@ npm run typeorm:migration:run
 
 ✅ Backend Phase 1 - Week 1 COMPLETE
 - NestJS setup
-- Entities (User, Doctor, Patient, Specialty)
+- Prisma schema (User, Doctor, Patient, Specialty)
 - Auth module (JWT)
 - Docker infrastructure
 - API Documentation (Swagger)

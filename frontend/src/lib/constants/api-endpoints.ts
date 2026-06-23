@@ -42,12 +42,15 @@ export const API_ENDPOINTS = {
     CANCEL: (id: string) => `/appointments/${id}`,
     BY_DOCTOR: '/appointments?doctorId',
     BY_PATIENT: '/appointments?patientId',
+    PATIENT_PRE_CONSULTATION: (appointmentId: string) =>
+      `/appointments/patient/${appointmentId}/pre-consultation`,
   },
 
   // Specialties
   SPECIALTIES: {
     LIST: '/specialties',
-    GET: (id: string) => `/specialties/${id}`,
+    GET: (code: string) => `/specialties/${code}`,
+    TEMPLATE: (code: string) => `/specialties/${code}/template`,
   },
 
   // Consultations
@@ -55,7 +58,9 @@ export const API_ENDPOINTS = {
     GET: (id: string) => `/consultations/${id}`,
     CREATE: '/consultations',
     UPDATE: (id: string) => `/consultations/${id}`,
-    BY_PATIENT: '/consultations?patientId',
-    BY_DOCTOR: '/consultations?doctorId',
+    CLOSE: (id: string) => `/consultations/${id}/close`,
+    IMPORT_PRE: (id: string) => `/consultations/${id}/import-pre-consultation`,
+    COMPARE: '/consultations/compare',
+    VITALS_TIMELINE: '/consultations/vitals-timeline',
   },
 };

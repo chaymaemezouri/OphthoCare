@@ -15,13 +15,13 @@ export const ROUTES = {
     PATIENT_MEDICAL_RECORDS: '/dashboard/patient/medical-records',
   },
 
-  // Protected routes - Doctor
+  // Protected routes - Doctor (UI cabinet en français)
   DOCTOR: {
-    HOME: (id: string) => `/dashboard/doctor/${id}`,
-    CALENDAR: (id: string) => `/dashboard/doctor/${id}/calendar`,
-    PATIENTS: (id: string) => `/dashboard/doctor/${id}/patients`,
-    CONSULTATIONS: (id: string) => `/dashboard/doctor/${id}/consultations`,
-    PRESCRIPTIONS: (id: string) => `/dashboard/doctor/${id}/prescriptions`,
+    HOME: () => `/dashboard/medecin`,
+    AGENDA: () => `/dashboard/medecin/agenda`,
+    PATIENTS: () => `/dashboard/medecin/patients`,
+    CONSULTATIONS: () => `/dashboard/medecin/consultations`,
+    PRESCRIPTIONS: () => `/dashboard/medecin/ordonnances`,
   },
 
   // API routes

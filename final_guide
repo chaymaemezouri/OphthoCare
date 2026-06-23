@@ -1,0 +1,2686 @@
+# ═══════════════════════════════════════════════════════════════
+# OPHTHOCARE v3.0 — FICHIER MAÎTRE COMPLET POUR CURSOR
+# Toutes les phases · Toute la logique · Tous les rôles
+# ═══════════════════════════════════════════════════════════════
+
+---
+
+# PARTIE 0 — VISION & STACK TECHNIQUE
+
+## Description du projet
+
+OphthoCare est une plateforme médicale multi-spécialités marocaine (et exportable).
+Elle permet :
+- Aux patients de rechercher des médecins, prendre des RDV, consulter leur dossier médical
+- Aux médecins de gérer leur agenda, leurs consultations, leurs documents, leurs patients
+- Aux secrétaires de gérer l'accueil, les paiements, le planning
+- Aux stagiaires d'apprendre via l'IA sur des dossiers réels (anonymisés selon permissions)
+- Aux admins de superviser la plateforme sans jamais accéder aux données médicales
+
+## Stack technique
+
+### Backend
+- Framework : NestJS (TypeScript)
+- ORM : Prisma
+- Base de données : PostgreSQL
+- Cache / sessions : Redis
+- Queue jobs async : BullMQ
+- Recherche full-text : Elasticsearch (repli Prisma si absent)
+- Stockage fichiers : S3 (MinIO en local, AWS S3 en prod)
+- PDF : Puppeteer
+- WebSocket : Socket.io (@nestjs/platform-socket.io)
+- Email : Nodemailer + Handlebars templates
+- SMS : Twilio
+- Push notifications : Firebase Cloud Messaging
+- DICOM : Orthanc (serveur DICOM REST)
+- IA : OpenAI GPT-4o
+- OCR : Tesseract.js (ou Azure Cognitive Services)
+- Auth : Passport.js + JWT (access token 15min + refresh token 7j)
+- Logs : Winston
+- Tests : Jest
+
+### Frontend
+- Framework : Next.js 14 (App Router, TypeScript)
+- État global : Zustand
+- Styles : Tailwind CSS + design system tokens
+- Composants UI : shadcn/ui
+- Graphiques : Recharts
+- Carte : react-leaflet (OpenStreetMap)
+- Calendrier : react-big-calendar
+- DICOM viewer : Cornerstone.js
+- i18n : next-intl (FR / AR / EN)
+- Tests : Vitest + Testing Library + Playwright (E2E)
+- Formulaires : react-hook-form + Zod
+
+### Infrastructure
+- Conteneurs : Docker + docker-compose
+- CI/CD : GitHub Actions
+- Reverse proxy : Nginx + SSL Let's Encrypt
+- Monitoring : Sentry + Uptime Robot
+- Backup : cron PostgreSQL → S3
+
+---
+
+# PARTIE 1 — RÔLES ET PERMISSIONS
+
+## Les 7 rôles
+
+### SUPER_ADMIN
+- Accès total à la plateforme
+- Peut créer des ADMIN
+- Voit les métriques plateforme, les logs d'audit complets
+- Peut suspendre ou certifier des médecins
+- N'accède PAS aux données médicales des patients
+
+### ADMIN
+- Modère les avis patients (approuver / rejeter)
+- Gère les spécialités et leurs champs dynamiques
+- Certifie les médecins (isCertified = true)
+- Suspend les médecins (isSuspended = true)
+- Voit les métriques agrégées anonymisées
+- Voit les logs d'audit (sans contenu médical)
+- Gère les tentatives de connexion suspectes
+- INTERDIT d'accéder au contenu des consultations, ordonnances, examens
+
+### DOCTOR
+- Propriétaire de son DoctorSpace (espace multi-tenant)
+- Gère son profil, ses horaires, ses tarifs, ses sites
+- Gère l'agenda et les rendez-vous de son espace
+- Crée et modifie les consultations de ses patients
+- Génère des ordonnances, reçus, comptes rendus, lettres de référence
+- Utilise l'assistant IA (résumé, diagnostics, rédaction)
+- Accède aux examens et images médicales de ses patients
+- Envoie des messages aux patients
+- Configure les webhooks et sa clé API
+- Voit ses propres analytics financiers et médicaux
+- Peut déléguer la gestion agenda à une SECRETARY
+
+### SECRETARY
+- Rattachée à un DoctorSpace (doctorSpaceId)
+- Gère l'agenda du médecin (créer/confirmer/annuler RDV)
+- Fait le check-in des patients à l'accueil
+- Gère les paiements et les reçus (créer, modifier statut)
+- Envoie des messages aux patients
+- Consulte les dossiers patients (lecture seule sur données médicales)
+- Envoie des liens de pré-consultation
+- Exporte les données comptables (Excel / PDF)
+- NE PEUT PAS créer de consultations médicales
+- NE PEUT PAS utiliser l'IA médicale
+
+### TRAINEE (stagiaire)
+- Rattaché à un DoctorSpace (doctorSpaceId)
+- Accède aux dossiers patients de l'espace (lecture seule)
+- Utilise le chatbot IA pédagogique (avec disclaimer)
+- Fait les quiz générés par IA
+- Consulte les explications d'examens
+- Voit la progression de ses sessions d'apprentissage
+- NE PEUT PAS créer ni modifier de données médicales
+- NE PEUT PAS gérer l'agenda
+- NE PEUT PAS envoyer de documents aux patients
+
+### PATIENT
+- Recherche des médecins (public)
+- Prend des rendez-vous
+- Prend des RDV pour ses membres de famille (sans compte propre)
+- Remplit le questionnaire pré-consultation (via lien ou tableau de bord)
+- Consulte son dossier médical (lecture seule)
+- Lit ses ordonnances, reçus, comptes rendus
+- Envoie et reçoit des messages avec le cabinet
+- Laisse des avis après un RDV COMPLETED
+- Gère ses membres de famille
+- Signe les consentements numériques
+- Rejoint la liste d'attente pour un médecin
+- Télécharge ses documents PDF
+
+### PUBLIC (non authentifié)
+- Consulte la landing page
+- Fait des recherches dans l'annuaire des médecins
+- Consulte le profil public d'un médecin
+- Remplit le questionnaire pré-consultation via lien SMS (token 48h)
+- Vérifie l'authenticité d'un document via QR code (/public/verify/:type/:uuid)
+
+---
+
+## Règle d'isolation multi-tenant (IMPÉRATIVE)
+
+Chaque DoctorSpace est un silo étanche.
+- DOCTOR, SECRETARY, TRAINEE : toutes leurs requêtes sont filtrées par `WHERE doctorSpaceId = req.user.doctorSpaceId`
+- Un médecin ne peut JAMAIS voir les données d'un autre DoctorSpace
+- Un patient peut avoir des dossiers dans plusieurs DoctorSpaces (un dossier par médecin)
+- Les données communes (profil public médecin, spécialités) sont accessibles à tous
+
+---
+
+# PARTIE 2 — RÈGLES IMPÉRATIVES GLOBALES
+
+1. **Isolation multi-tenant** : chaque endpoint filtré par doctorSpaceId
+2. **ADMIN aveugle médicalement** : ADMIN ne voit jamais consultations, ordonnances, examens, contenu des dossiers
+3. **Disclaimer IA obligatoire** : texte "⚠️ Outil pédagogique — diagnostic médecin uniquement" affiché en permanence sur tous les composants IA
+4. **BullMQ pour tâches lourdes** : génération PDF, envoi email, envoi SMS, appels API OpenAI, notifications push — jamais en synchrone
+5. **S3 avant URL** : tout PDF généré est d'abord uploadé sur S3, puis l'URL signée est retournée
+6. **Audit log médical** : chaque accès à un dossier patient est loggé (userId, patientId, action, timestamp, ip)
+7. **Chiffrement AES-256** : nationalId, numéro sécurité sociale, numéro d'assurance
+8. **Rate limiting** : auth 5 req/min, IA 20 req/min/user, API publique 100 req/min, API avec clé 1000 req/h
+9. **Validation backend** : class-validator sur tous les DTOs, jamais de confiance côté client
+10. **Convention frontend** : chaque composant commence par `// design-system → [section]`
+11. **Prisma paramétré** : jamais de requêtes SQL brutes, toujours via Prisma pour éviter injection
+12. **TRAINEE disclaimer** : badge "Accès pédagogique uniquement" visible sur toutes les pages TRAINEE
+
+---
+
+# PARTIE 3 — PHASES DE DÉVELOPPEMENT
+
+---
+
+## ✅ PHASE 1 — ARCHITECTURE & SETUP (Semaines 1–6) [TERMINÉ]
+
+### Statut : COMPLET — ne pas retoucher sauf bug
+
+### Ce qui est en place
+
+#### Infrastructure
+- NestJS initialisé, structure modulaire (src/modules/, src/common/, src/database/)
+- PostgreSQL + Prisma avec migrations
+- Redis configuré pour cache et sessions
+- docker-compose.dev.yml (backend + DB + Redis)
+- Nginx en développement
+- Winston logger configuré
+- Jest configuré
+
+#### Sécurité de base
+- Helmet.js (CSP, HSTS, X-Frame-Options)
+- CORS configuré (whitelist)
+- Rate limiting global (Throttler NestJS)
+- Variables d'environnement via .env
+
+#### Frontend
+- Next.js 14 App Router avec TypeScript
+- Zustand store configuré
+- Axios avec interceptors (auto-refresh token)
+- Tailwind + design system tokens
+- shadcn/ui installé
+- Types TypeScript exhaustifs (User, Doctor, Patient, Appointment, etc.)
+- Middleware d'authentification sur les routes protégées
+
+#### Documentation
+- ARCHITECTURE.md
+- DATABASE.md (ERD)
+- API_SPEC.md
+- DEVELOPMENT.md
+
+---
+
+## ✅ PHASE 2 — MVP CORE (Semaines 7–20) [TERMINÉ]
+
+---
+
+### ✅ 2.1 — Authentification & RBAC (Sem 7–8) [TERMINÉ]
+
+#### Logique métier
+- À l'inscription : créer User + profil selon le rôle (Doctor → DoctorSpace créé automatiquement)
+- Login : vérifier email + password (bcrypt), si 2FA activé → envoyer OTP SMS → attendre vérification
+- Access token : 15 minutes (JWT, payload : userId, role, doctorSpaceId)
+- Refresh token : 7 jours, stocké en cookie httpOnly + enregistré en DB pour invalidation
+- Logout : invalider le refresh token en DB
+- Password reset : générer token UUID, envoyer par email, valide 1h, usage unique
+
+#### Entités
+```
+User : id, email, password (bcrypt), role (ENUM), lang, isActive, twoFactorEnabled, twoFactorSecret, createdAt
+RefreshToken : id, userId, token, expiresAt, isRevoked
+PasswordResetToken : id, userId, token, expiresAt, usedAt
+```
+
+#### Endpoints
+- POST /auth/register → { email, password, role, firstName, lastName, phone }
+- POST /auth/login → { email, password } → { accessToken, user } + cookie refreshToken
+- POST /auth/logout → invalider refreshToken en DB
+- POST /auth/refresh → lire cookie refreshToken → nouveau accessToken
+- POST /auth/forgot-password → { email } → envoyer email avec lien reset
+- POST /auth/reset-password → { token, newPassword } → changer password, invalider token
+- POST /auth/2fa/enable → { phone } → envoyer OTP SMS
+- POST /auth/2fa/verify → { otp } → activer 2FA sur le compte
+- POST /auth/2fa/challenge → { email, password, otp } → login avec 2FA
+- GET /auth/me → retourner l'utilisateur connecté avec son profil
+
+#### Guards et décorateurs
+- JwtAuthGuard : vérifier access token sur toutes les routes protégées
+- RolesGuard : @Roles(Role.DOCTOR, Role.SECRETARY) → vérifier req.user.role
+- DoctorSpaceGuard : vérifier req.user.doctorSpaceId === resource.doctorSpaceId
+
+#### Frontend
+- /login, /register, /forgot-password, /reset-password
+- Étape 2FA dans le flux login (si twoFactorEnabled)
+- AuthStore Zustand : { user, accessToken, login(), logout(), refreshToken() }
+- useAuth hook : accès au store depuis n'importe quel composant
+- Middleware Next.js : redirection si non authentifié sur /dashboard/*
+
+#### Rôles : tous
+
+---
+
+### ✅ 2.2 — Module Médecins (Sem 9–10) [TERMINÉ]
+
+#### Logique métier
+- À la création d'un médecin : créer automatiquement un DoctorSpace (isolation multi-tenant)
+- Un médecin peut avoir plusieurs sites (cabinets) avec des horaires différents par site
+- Les horaires définissent les créneaux disponibles pour le booking
+- Le slotDurationMinutes (15 à 120) détermine la granularité des créneaux
+
+#### Entités
+```
+Doctor : id, userId, firstName, lastName, specialtyCode, bio, photoUrl, signatureUrl, 
+         slotDurationMinutes, isCertified, isSuspended, preferredCurrency, lang,
+         orderNumber (numéro d'ordre médical), createdAt
+
+DoctorSpace : id, doctorId, name (ex: "Cabinet Dr Martin")
+
+DoctorSite : id, doctorSpaceId, name, address, city, country, lat, lng,
+             phone, partnerTypes[] (PHARMACY|LAB|IMAGING)
+
+WorkingHours : id, doctorSiteId, dayOfWeek (0-6), startTime, endTime, isActive
+
+Tariff : id, doctorSiteId, actType, label, amount, currency, durationMinutes
+```
+
+#### Endpoints
+- GET /doctors → liste publique (filtrable)
+- GET /doctors/:id → profil public complet
+- GET /doctors/me → profil du médecin connecté (DOCTOR)
+- PATCH /doctors/me → modifier son profil (DOCTOR)
+- PATCH /doctors/me/photo → upload photo S3 (DOCTOR)
+- PATCH /doctors/me/signature → upload signature PNG ≤200KB S3 privé (DOCTOR)
+- GET /doctors/me/sites → ses sites (DOCTOR)
+- POST /doctors/me/sites → ajouter un site (DOCTOR)
+- PATCH /doctors/me/sites/:siteId → modifier site (DOCTOR)
+- DELETE /doctors/me/sites/:siteId → supprimer site (DOCTOR)
+- PATCH /doctors/me/sites/:siteId/working-hours → configurer horaires (DOCTOR)
+- GET /doctors/me/tariffs → ses tarifs (DOCTOR)
+- POST /doctors/me/tariffs → ajouter tarif (DOCTOR)
+- PATCH /doctors/me/tariffs/:id → modifier tarif (DOCTOR)
+- GET /doctors/:id/public-profile → profil public avec avis approuvés (PUBLIC)
+
+#### Frontend
+- /dashboard/doctor/[id]/settings/profile → édition profil, photo, signature
+- /dashboard/doctor/[id]/settings/sites → gestion sites et horaires
+- /dashboard/doctor/[id]/settings/tariffs → gestion tarifs et devises
+- Dashboard médecin : accueil avec aperçu du jour
+
+#### Rôles : DOCTOR (gestion), PUBLIC (consultation profil)
+
+---
+
+### ✅ 2.3 — Annuaire & Recherche (Sem 11–12) [TERMINÉ]
+
+#### Logique métier
+- Elasticsearch indexe les médecins à chaque création/modification/suppression (via hook Prisma)
+- Si Elasticsearch indisponible → repli automatique sur requête Prisma
+- La disponibilité (availableOn) est calculée en temps réel depuis WorkingHours
+- Les résultats incluent le prochain créneau disponible de chaque médecin
+
+#### Index Elasticsearch : doctors
+```
+Champs indexés : id, firstName, lastName, specialtyCode, specialtyLabel, 
+                 city, country, lat, lng, rating, reviewCount, 
+                 isVerified, isCertified, minPrice, maxPrice, languages[]
+```
+
+#### Endpoints
+- GET /doctors/search?q=&specialty=&city=&availableOn=YYYY-MM-DD&minRating=&maxPrice=&isVerified=&skip=&take=
+  → { items: Doctor[], total: number, usedElasticsearch: boolean }
+- GET /doctors/search/specialties → liste des spécialités disponibles pour les filtres
+- GET /doctors/search/cities → liste des villes disponibles
+- GET /doctors/availability?doctorId=&date= → créneaux disponibles pour ce jour
+- POST /doctors/search/reindex → réindexer tous les médecins (ADMIN)
+
+#### Frontend
+- Landing page (/) : hero avec barre recherche, spécialités populaires, médecins en vedette
+- /search : résultats avec filtres sidebar (spécialité, ville, prix, note, disponibilité, certifié)
+- Carte Leaflet / OpenStreetMap (react-leaflet, chargement dynamique sans SSR)
+- DoctorCard : photo, nom, spécialité, ville, note (étoiles), tarif, prochain RDV dispo, bouton réserver
+- /doctor/[id] : profil public complet (bio, sites, horaires, avis, tarifs)
+
+#### Rôles : PUBLIC, PATIENT (recherche identique)
+
+---
+
+### ✅ 2.4 — Module Patients (Sem 13–14) [TERMINÉ]
+
+#### Logique métier
+- Un patient peut être suivi par plusieurs médecins (plusieurs DoctorSpaces)
+- Chaque médecin voit uniquement les patients qui ont eu un RDV dans son espace
+- Le nationalId est chiffré en AES-256 avant stockage
+- Les diagnoses sont stockés en JSON avec codes CIM-10
+
+#### Entités
+```
+Patient : id, userId, firstName, lastName, dateOfBirth, gender, phone, address,
+          nationalId (chiffré), allergies[], antecedents[], diagnoses (JSON CIM-10),
+          bloodType, insuranceProvider, insuranceNumber, insuranceCoverage, coverageNotes,
+          emergencyContact (JSON : nom, relation, téléphone), createdAt
+
+PatientDoctorAccess : patientId, doctorSpaceId, firstVisit, lastVisit
+  → créé automatiquement au premier RDV confirmé
+```
+
+#### Endpoints
+- GET /patients/me → profil du patient connecté (PATIENT)
+- PUT /patients/me → modifier son profil (PATIENT)
+- GET /patients → liste patients de l'espace médecin (DOCTOR, SECRETARY)
+- GET /patients/:id → dossier patient (DOCTOR, SECRETARY de l'espace uniquement)
+- PATCH /patients/:id → modifier données admin (DOCTOR, SECRETARY)
+- PATCH /patients/:id/medical → modifier données médicales (DOCTOR uniquement)
+- DELETE /patients/:id → archiver patient (DOCTOR, ADMIN)
+- POST /patients/:id/diagnoses → ajouter diagnostic CIM-10 (DOCTOR)
+- GET /patients/:id/history → historique complet (RDV + consultations) (DOCTOR, SECRETARY)
+- POST /patients/:id/consent → { type, signedAt } → enregistrer consentement (PATIENT)
+
+#### Frontend
+- /register : inscription patient en 2 étapes (compte → profil médical)
+- /dashboard/patient/profile : édition profil complet
+- /dashboard/doctor/[id]/patients : liste patients de l'espace avec recherche
+- /dashboard/doctor/[id]/patients/[patientId] : dossier patient complet
+
+#### Rôles : PATIENT (ses données), DOCTOR (patients de son espace), SECRETARY (patients de l'espace, lecture médicale uniquement)
+
+---
+
+### ✅ 2.5 — Rendez-vous & Agenda (Sem 15–18) [TERMINÉ]
+
+#### Logique métier complète
+
+**Génération des créneaux :**
+1. Lire WorkingHours du médecin pour le site et le jour demandé
+2. Générer tous les créneaux selon slotDurationMinutes (ex: 09:00, 09:30, 10:00...)
+3. Exclure les créneaux déjà bookés (Appointment.status IN [PENDING, CONFIRMED])
+4. Exclure les créneaux bloqués (ScheduleBlock)
+5. Retourner uniquement les créneaux libres
+
+**Anti-double-booking (Redis) :**
+- À l'initiation du booking : SETNX "slot:{doctorId}:{siteId}:{startAt}" avec TTL 10 minutes
+- Si clé existe → créneau déjà en cours de réservation → retourner 409
+- À la confirmation → la clé Redis est supprimée, l'Appointment est créé en DB
+
+**Statuts des RDV :**
+- PENDING → patient a réservé, médecin n'a pas encore confirmé
+- CONFIRMED → médecin ou secrétaire a confirmé
+- IN_PROGRESS → consultation ouverte par le médecin
+- COMPLETED → consultation fermée
+- CANCELLED → annulé (par patient, médecin ou secrétaire)
+- NO_SHOW → patient ne s'est pas présenté
+
+**Notifications automatiques (BullMQ) :**
+- À la création → email + SMS confirmation patient
+- J-1 → email + SMS rappel patient
+- H-2 → SMS rappel patient
+- Annulation → email + SMS notification patient et médecin
+
+#### Entités
+```
+Appointment : id, patientId, doctorId, doctorSpaceId, siteId, startAt, endAt,
+              status (ENUM), type (NEW|FOLLOWUP|EMERGENCY|TELECONSULT),
+              notes, familyMemberId?, cancelReason?, cancelledBy?,
+              preConsultationFormId?, createdAt
+
+ScheduleBlock : id, doctorSpaceId, siteId?, startAt, endAt, reason, type (ABSENCE|HOLIDAY|BREAK)
+```
+
+#### Endpoints
+- GET /appointments/slots?doctorId=&siteId=&date=&duration= → créneaux disponibles
+- POST /appointments → créer RDV (PATIENT, SECRETARY)
+  body: { doctorId, siteId, startAt, endAt, type, notes?, familyMemberId? }
+- GET /appointments → liste RDV (filtrée par rôle)
+- GET /appointments/:id → détail RDV
+- PATCH /appointments/:id/confirm → confirmer (DOCTOR, SECRETARY)
+- PATCH /appointments/:id/cancel → { cancelReason } (PATIENT, DOCTOR, SECRETARY)
+- PATCH /appointments/:id/no-show → (DOCTOR, SECRETARY)
+- PATCH /appointments/:id/check-in → accueil patient (SECRETARY)
+- GET /appointments/doctor/:id/today → RDV du jour (DOCTOR, SECRETARY)
+- GET /appointments/doctor/:id/week → agenda semaine (DOCTOR, SECRETARY)
+- GET /appointments/patient/me → mes RDV (PATIENT)
+- POST /doctors/me/schedule-blocks → créer blocage (DOCTOR, SECRETARY)
+- DELETE /doctors/me/schedule-blocks/:id → supprimer blocage
+- GET /doctors/me/calendar.ics → export ICS (DOCTOR)
+
+#### Frontend médecin
+- Calendrier react-big-calendar (jour / semaine / mois)
+- Drag & drop pour déplacer un RDV
+- Couleur par statut : PENDING=jaune, CONFIRMED=bleu, COMPLETED=vert, CANCELLED=rouge, NO_SHOW=gris
+- Popup détail RDV : patient, type, notes, actions (confirmer, annuler, ouvrir consultation)
+- Modal création RDV manuel (secrétaire)
+- Gestion absences : sélection période sur calendrier → créer ScheduleBlock
+
+#### Frontend patient
+- Booking widget 6 étapes :
+  1. Spécialité → 2. Médecin → 3. Site → 4. Date → 5. Créneau → 6. Confirmation
+- Page /dashboard/patient/appointments : liste RDV avec statuts, bouton annuler
+- Rappels visibles sur le tableau de bord patient
+
+#### Rôles : PATIENT (créer, annuler les siens), DOCTOR (gérer son agenda), SECRETARY (gérer l'agenda du médecin)
+
+---
+
+### ✅ 2.6 — Dossier Patient Base (Sem 19–20) [TERMINÉ — PARTIEL]
+
+#### Ce qui est fait
+- MedicalRecord.entity avec structuredData JSON
+- Versioning (MedicalRecordVersion)
+- Audit trail (PatientMedicalAudit)
+- Template ophtalmologie de base
+- Timeline médicale unifiée (RDV + notes)
+- Import JSON de données existantes
+
+#### Ce qui manque → traité dans Phase 2-BIS.1
+
+---
+
+# ═══════════════════════════════════════════════════════════════
+# PHASES COMPLÉMENTAIRES — À IMPLÉMENTER
+# ═══════════════════════════════════════════════════════════════
+
+---
+
+## 🔴 PHASE 2-BIS — COMPLÉTION MVP (Semaines 19–24) [PRIORITÉ 1]
+
+---
+
+### 2-BIS.1 — Dossier Patient Multi-Spécialités Complet (Sem 19–20)
+
+#### Logique métier
+
+**Système de templates dynamiques :**
+- Chaque spécialité a un tableau de SpecialtyField[] définissant les champs du formulaire
+- Les types de champs : text, number, select, date, boolean, range, multiselect
+- Le frontend reçoit ce tableau et génère dynamiquement les inputs + validation Zod
+- Si la spécialité du médecin n'est pas dans la liste → template générique (observations + constantes vitales)
+- Le contenu de chaque consultation est stocké en JSON dans `structuredData` avec les clés des SpecialtyField
+
+**Comparaison de consultations :**
+- Charger 2 consultations du même patient
+- Calculer le diff : { key: { from: valeurAnc, to: valeurNouvelle } }
+- Afficher uniquement les champs qui ont changé avec mise en surbrillance
+- Guard strict : seul le DOCTOR de l'espace peut comparer
+
+**Chronométrage consultation :**
+- À l'ouverture (POST /consultations → status IN_PROGRESS) : stocker startAt
+- À la fermeture (POST /consultations/:id/close) : duration = closedAt - startAt en secondes
+- Utiliser la duration pour les analytics (durée moyenne par type)
+
+**Import pré-consultation :**
+- Quand le médecin ouvre une consultation, vérifier s'il existe un preConsultationForm lié au RDV
+- Si oui → proposer "Importer les données pré-consultation"
+- Les réponses du questionnaire sont mappées vers les champs du template
+- L'original est conservé pour traçabilité
+
+#### Entités
+```
+Specialty : id, code (unique), name, icon, specificFields (JSON SpecialtyField[]), examTypes (string[])
+
+SpecialtyField : { key: string, label: string, type: 'text'|'number'|'select'|'date'|'boolean'|'range'|'multiselect', options?: string[], unit?: string, required?: boolean, min?: number, max?: number }
+
+Consultation : id, appointmentId, patientId, doctorId, doctorSpaceId, specialtyCode,
+               structuredData (JSON), observations, diagnosis, plan, prescriptionIds[],
+               status (DRAFT|IN_PROGRESS|COMPLETED), startAt, closedAt, duration (secondes),
+               preConsultationFormId?, createdAt
+```
+
+#### Seeds à créer absolument (specialties.seed.ts)
+```
+Ophtalmologie : [
+  { key: 'acuiteOD', label: 'Acuité visuelle OD', type: 'number', unit: '/10' },
+  { key: 'acuiteOG', label: 'Acuité visuelle OG', type: 'number', unit: '/10' },
+  { key: 'pio', label: 'Pression intra-oculaire', type: 'number', unit: 'mmHg' },
+  { key: 'refraction', label: 'Réfraction', type: 'text' },
+  { key: 'correction', label: 'Correction optique', type: 'text' },
+  { key: 'oct', label: 'Historique OCT', type: 'text' },
+  { key: 'segmentAnt', label: 'Segment antérieur', type: 'text' },
+  { key: 'fondOeil', label: "Fond d'œil", type: 'text' }
+]
+
+Cardiologie : [
+  { key: 'fc', label: 'Fréquence cardiaque', type: 'number', unit: 'bpm' },
+  { key: 'taSys', label: 'TA systolique', type: 'number', unit: 'mmHg' },
+  { key: 'taDia', label: 'TA diastolique', type: 'number', unit: 'mmHg' },
+  { key: 'fractionEjection', label: "Fraction d'éjection", type: 'number', unit: '%' },
+  { key: 'ecg', label: 'Historique ECG', type: 'text' },
+  { key: 'auscultation', label: 'Auscultation', type: 'text' }
+]
+
+Dermatologie : [
+  { key: 'phototype', label: 'Phototype', type: 'select', options: ['I','II','III','IV','V','VI'] },
+  { key: 'lesions', label: 'Description des lésions', type: 'text' },
+  { key: 'dermoscopie', label: 'Dermoscopie', type: 'text' },
+  { key: 'localisation', label: 'Localisation', type: 'text' }
+]
+
+Gynécologie : [
+  { key: 'cycle', label: 'Cycle menstruel', type: 'text' },
+  { key: 'parite', label: 'Parité', type: 'number' },
+  { key: 'gestate', label: 'Gestité', type: 'number' },
+  { key: 'dlr', label: 'Date des dernières règles', type: 'date' },
+  { key: 'echo', label: 'Écho obstétricale', type: 'text' }
+]
+
+Pédiatrie : [
+  { key: 'poids', label: 'Poids', type: 'number', unit: 'kg' },
+  { key: 'taille', label: 'Taille', type: 'number', unit: 'cm' },
+  { key: 'pc', label: 'Périmètre crânien', type: 'number', unit: 'cm' },
+  { key: 'developpement', label: 'Développement psychomoteur', type: 'text' },
+  { key: 'vaccinations', label: 'Carnet de vaccinations', type: 'text' }
+]
+
+Neurologie : [
+  { key: 'gcs', label: 'Score GCS', type: 'number', min: 3, max: 15 },
+  { key: 'nihss', label: 'Score NIHSS', type: 'number' },
+  { key: 'reflexes', label: 'Réflexes', type: 'text' },
+  { key: 'motricite', label: 'Motricité', type: 'text' }
+]
+
+Pneumologie : [
+  { key: 'spo2', label: 'Saturation O2', type: 'number', unit: '%' },
+  { key: 'peakFlow', label: 'Peak Flow', type: 'number', unit: 'L/min' },
+  { key: 'efr', label: 'EFR', type: 'text' },
+  { key: 'auscultation', label: 'Auscultation pulmonaire', type: 'text' }
+]
+
+Orthopédie : [
+  { key: 'localisation', label: 'Localisation douleurs', type: 'text' },
+  { key: 'scoresFonctionnels', label: 'Scores fonctionnels', type: 'text' },
+  { key: 'mobilite', label: 'Mobilité articulaire', type: 'text' }
+]
+
+Médecine Générale : [
+  { key: 'poids', label: 'Poids', type: 'number', unit: 'kg' },
+  { key: 'taille', label: 'Taille', type: 'number', unit: 'cm' },
+  { key: 'imc', label: 'IMC', type: 'number', unit: 'kg/m²' },   ← calculé auto = poids / (taille/100)²
+  { key: 'ta', label: 'Tension artérielle', type: 'text' },
+  { key: 'fc', label: 'Fréquence cardiaque', type: 'number', unit: 'bpm' },
+  { key: 'temperature', label: 'Température', type: 'number', unit: '°C' }
+]
+
++ Endocrinologie, Rhumatologie, Urologie, ORL, Ophtalmologie pédiatrique,
+  Psychiatrie, Gastro-entérologie, Néphrologie, Hématologie → champs de base
+```
+
+#### Endpoints
+- GET /specialties → liste toutes les spécialités
+- GET /specialties/:code/template → retourne SpecialtyField[] pour ce code
+- POST /specialties (ADMIN only)
+- PATCH /specialties/:id (ADMIN only)
+- POST /consultations → créer consultation (DOCTOR)
+- GET /consultations/:id → lire consultation (DOCTOR, SECRETARY lecture, TRAINEE lecture)
+- PATCH /consultations/:id → modifier consultation (DOCTOR)
+- POST /consultations/:id/close → fermer + calculer duration + générer reçu automatiquement
+- POST /consultations/:id/import-pre-consultation → { preFormId } → importer données questionnaire
+- GET /consultations/compare?id1=&id2= → diff entre 2 consultations (DOCTOR)
+
+#### Composants frontend à créer
+- `components/medical/SpecialtyFormRenderer.tsx`
+  - Props : fields: SpecialtyField[], defaultValues?, onSubmit
+  - Génère dynamiquement les inputs (Input/Select/DatePicker/Checkbox/RangeSlider)
+  - Génère le schéma Zod dynamiquement selon les types
+  - Affiche l'unité à droite de chaque champ number
+  - Calcule l'IMC automatiquement quand poids/taille changent
+  - Pré-remplit depuis preConsultationForm si disponible
+
+- `components/medical/VitalSignsTimeline.tsx`
+  - Recharts LineChart avec plusieurs lignes (TA sys, TA dia, FC, poids, SpO2, glycémie)
+  - Zones de normalité en fond (vert = normal, rouge = anormal)
+  - Alerte visuelle si valeur hors plage (couleur danger du design system)
+  - Date range picker pour filtrer la période
+  - Tooltip avec valeur + date + unité
+
+- `components/medical/ConsultationComparison.tsx`
+  - Layout split view 50/50 (before | after)
+  - Les champs qui ont changé sont surlignés en jaune
+  - Toggle "Voir différences uniquement" → masquer les champs identiques
+  - Badge dates sur chaque colonne
+
+- `components/medical/GrowthCurveChart.tsx` (pédiatrie uniquement)
+  - Courbes de référence WHO : poids / taille / périmètre crânien
+  - Percentiles : 3e, 10e, 25e, 50e (médiane), 75e, 90e, 97e
+  - Point patient sur la courbe (couleur selon percentile)
+  - Interprétation automatique : "Poids au 75e percentile — développement normal"
+
+#### Rôles
+- DOCTOR : créer, modifier, fermer consultations, comparer
+- SECRETARY : lecture seule consultations
+- TRAINEE : lecture seule consultations de l'espace
+- PATIENT : lecture seule de ses consultations
+- ADMIN : accès aux templates spécialités uniquement
+
+---
+
+### 2-BIS.2 — Génération Documents PDF Complète (Sem 21–22)
+
+#### Logique métier
+
+**Structure commune de tous les PDF :**
+- En-tête : logo plateforme + nom médecin + spécialité + n° ordre médical + adresse du site + téléphone
+- Pied de page : n° de document séquentiel + QR code authenticité + date de génération + signature
+
+**Numérotation séquentielle des reçus :**
+- Format : YYYY-NNNNN (ex : 2025-00123)
+- Compteur par DoctorSpace, remis à 0 chaque année
+- Atomic : incrément en transaction PostgreSQL pour éviter doublons
+
+**Vérification authenticité (QR code) :**
+- Chaque document génère un UUID unique
+- QR code encode l'URL : https://ophthocare.com/verify/prescription/{uuid}
+- GET /public/verify/:type/:uuid → { isValid: true, doctorName, documentDate } sans auth
+
+**Flux de génération :**
+1. Médecin clique "Générer PDF"
+2. BullMQ job créé (non bloquant)
+3. Service Puppeteer génère le HTML → PDF
+4. PDF uploadé sur S3 bucket privé
+5. URL signée 24h retournée
+6. document.pdfUrl mis à jour en DB
+7. Notification WebSocket → frontend actualise l'aperçu
+
+**Signature médecin :**
+- Image PNG fond transparent stockée en S3 privé
+- À la génération : intégrée dans le PDF (img base64)
+- La signature est visuelle uniquement (pas de signature électronique certifiée — voir Phase 7.2)
+
+#### Entités
+```
+Prescription : id, consultationId, patientId, doctorId, doctorSpaceId,
+               type (STANDARD|OPTIC|KINE|WORK_STOPPAGE|DIET),
+               medications (JSON : [{ name, dosage, frequency, duration, instructions }]),
+               pdfUrl, verificationUuid, createdAt
+
+Receipt : id, consultationId?, patientId, doctorId, doctorSpaceId,
+          sequentialNumber, actType, actLabel, amount, currency, status (PENDING|PAID|PARTIAL|CANCELLED),
+          paidAt?, paymentMethod (CASH|CARD|INSURANCE|WIRE), pdfUrl, verificationUuid, createdAt
+
+Report : id, consultationId, patientId, doctorId, doctorSpaceId,
+         type (CONSULTATION|CERTIFICATE|REFERRAL|DISCHARGE|WORK_STOPPAGE),
+         title, content (texte riche), shareToken (UUID, TTL 24h), sharedAt?,
+         sentToPatientAt?, pdfUrl, verificationUuid, createdAt
+
+Medication : id, name, genericName, form (comprimé|gélule|sirop|injection|pommade...),
+             dosages[] (base de données médicaments FR+MA)
+```
+
+#### Endpoints
+- POST /prescriptions → créer + lancer génération PDF (BullMQ) (DOCTOR)
+- GET /prescriptions/:id → lire ordonnance
+- GET /prescriptions/patient/:patientId → historique ordonnances (DOCTOR, PATIENT)
+- POST /prescriptions/:id/send → envoyer PDF par email au patient (DOCTOR, SECRETARY)
+- POST /receipts → créer reçu (DOCTOR, SECRETARY)
+- PATCH /receipts/:id → modifier statut paiement (DOCTOR, SECRETARY)
+- GET /receipts/patient/:patientId → historique reçus
+- GET /receipts/export?month=YYYY-MM → export Excel (DOCTOR, SECRETARY)
+- POST /reports → créer compte rendu (DOCTOR)
+- PATCH /reports/:id → modifier (DOCTOR)
+- POST /reports/:id/share → générer lien partage temporaire (token 24h) (DOCTOR)
+- PATCH /reports/:id/send-to-patient → email avec PDF joint (DOCTOR, SECRETARY)
+- GET /public/verify/:type/:uuid → vérifier authenticité document (PUBLIC)
+- PATCH /doctors/me/signature → upload signature (DOCTOR)
+
+#### Composants frontend à créer
+- `components/documents/PrescriptionForm.tsx`
+  - Champ médicament avec auto-complétion (base médicaments FR + MA)
+  - Bouton "+ Ajouter médicament"
+  - Par médicament : nom, dosage, fréquence, durée, instructions
+  - Sélecteur type d'ordonnance (STANDARD, OPTIC, KINE, etc.)
+  - Preview PDF en temps réel (iframe pointant vers l'URL S3 générée)
+  - Boutons : Générer PDF | Envoyer au patient | Imprimer
+
+- `components/documents/ReportEditor.tsx`
+  - Éditeur de texte riche minimal (bold, italic, listes, titres)
+  - Bouton "Suggestion IA" → appel POST /ai/draft-report → pré-remplir l'éditeur
+  - Sélecteur type (consultation / certificat / arrêt travail / référence)
+  - Toggle "Partager avec le patient" → active lien de partage
+  - Horodatage automatique à la "signature"
+
+- `components/documents/DocumentsList.tsx`
+  - Onglets : Ordonnances | Comptes rendus | Reçus | Certificats
+  - Chaque ligne : type, date, patient, statut, actions (voir PDF, renvoyer, supprimer)
+  - Filtres : date, patient, type
+  - Téléchargement groupé ZIP (backend: GET /documents/export-zip)
+
+- `components/documents/ReceiptManager.tsx` (secrétaire)
+  - Créer reçu rapide (patient, acte, montant, devise, mode paiement)
+  - Tableau avec statuts cliquables inline (PENDING → PAID)
+  - Totaux du jour : Facturé / Payé / En attente
+
+#### Rôles
+- DOCTOR : créer tout type de document, envoyer, partager, gérer signature
+- SECRETARY : créer reçus, modifier statuts paiement, envoyer documents
+- PATIENT : lire et télécharger ses propres documents
+- PUBLIC : vérifier authenticité via QR code (/public/verify/...)
+
+---
+
+### 2-BIS.3 — Messagerie Interne Cabinet-Patient (Sem 23–24)
+
+#### Logique métier
+
+**Modèle de conversations :**
+- Une conversation = entre un patient et un DoctorSpace (pas un médecin individuel)
+- ID de conversation : `conv:{min(userId1,userId2)}-{max(userId1,userId2)}` → toujours le même peu importe qui initie
+- Les secrétaires et le médecin du DoctorSpace voient toutes les conversations de l'espace
+- Un patient ne peut écrire qu'aux DoctorSpaces où il a eu au moins un RDV
+
+**Connexion WebSocket :**
+- Le client se connecte au namespace `/chat` avec son JWT en header
+- À la connexion : vérifier JWT, récupérer userId + doctorSpaceId
+- Rejoindre automatiquement les rooms de ses conversations
+
+**Diffusion groupée (newsletter) :**
+- Réservé DOCTOR uniquement
+- Filtres : ALL (tous les patients de l'espace), ACTIVE_LAST_30D (venus dans les 30 derniers jours), CHRONIC (patients avec un plan de suivi chronique actif)
+- Envoyé par email via BullMQ (pas en WebSocket → trop de connexions)
+- Loggé dans BroadcastLog pour historique
+
+#### Entités
+```
+Conversation : id, patientId, doctorSpaceId, lastMessageAt, unreadCountDoctor, unreadCountPatient
+
+Message : id, conversationId, senderId, senderRole, content, readAt?, createdAt
+
+BroadcastLog : id, doctorSpaceId, subject, content, recipientFilter, recipientCount, sentAt
+```
+
+#### Endpoints (REST)
+- GET /messaging/conversations → liste conversations (filtrée par rôle)
+- GET /messaging/conversations/:id/messages?cursor=&limit= → messages paginés (cursor-based)
+- POST /messaging/conversations → initier conversation (PATIENT)
+- PATCH /messaging/messages/:id/read → marquer comme lu
+- POST /messaging/broadcast (DOCTOR only) → { subject, content, recipientFilter }
+
+#### WebSocket events (namespace /chat)
+- Client → Serveur :
+  - `sendMessage` : { conversationId, content }
+  - `markRead` : { messageId }
+  - `typing` : { conversationId, isTyping: boolean }
+- Serveur → Client :
+  - `newMessage` : Message (envoyé à la room de la conversation)
+  - `messageReadAck` : { messageId }
+  - `typingStatus` : { conversationId, userId, isTyping }
+  - `unreadCount` : { total } (envoyé à chaque connexion)
+
+#### Composants frontend à créer
+- `components/common/MessagingPanel.tsx`
+  - Sidebar gauche : liste conversations (avatar patient, dernier message, badge unread)
+  - Zone principale : messages en bulles (droite = soi, gauche = autre)
+  - Avatar + horodatage sur chaque message
+  - Input envoi + bouton envoi
+  - Indicateur "est en train d'écrire..."
+  - Connexion Socket.io avec reconnexion automatique
+
+- `hooks/useMessaging.ts`
+  - Initialise la connexion Socket.io (une seule fois)
+  - Expose : conversations, activeConversationId, messages, unreadCount
+  - Actions : sendMessage(content), markRead(messageId), setActiveConversation(id)
+  - Met à jour le badge dans la navbar globale
+
+- Badge unread dans la navbar principale (cloche ou icône message avec compteur)
+
+#### Rôles
+- PATIENT : voir et envoyer des messages dans ses conversations
+- DOCTOR : voir et envoyer dans toutes les conversations de son espace, faire des broadcasts
+- SECRETARY : voir et envoyer dans toutes les conversations de l'espace
+- TRAINEE : aucun accès à la messagerie
+
+---
+
+## 📱 PHASE 3 — MOBILE & COMMUNICATION (Semaines 21–30) [À FAIRE]
+
+---
+
+### 3.1 — Application Mobile Patient Flutter (Sem 21–23)
+
+#### Logique métier
+- L'app mobile consomme la même API REST que le web
+- Auth identique (JWT + refresh en secure storage)
+- Push notifications via FCM (Firebase Cloud Messaging)
+- Mode hors-ligne limité : cache des RDV à venir en SQLite local
+
+#### Pages à développer
+- Login / Register / Forgot password
+- Accueil : prochains RDV, notifications récentes, accès rapide recherche
+- Recherche médecins (filtres, carte)
+- Booking widget (6 étapes, identique au web)
+- Mes rendez-vous : liste, détail, annulation
+- Questionnaire pré-consultation (formulaire dynamique)
+- Mon dossier médical (lecture seule)
+- Mes documents (ordonnances, reçus, comptes rendus)
+- Messagerie (conversations avec le cabinet)
+- Profil et paramètres
+
+#### Rôles : PATIENT
+
+---
+
+### 3.2 — Application Mobile Médecin Flutter (Sem 24–25)
+
+#### Pages à développer
+- Dashboard : RDV du jour, statistiques rapides
+- Agenda du jour (liste ou vue timeline)
+- Dossier patient en lecture (résumé)
+- Messagerie (conversations patients)
+- Notifications
+
+#### Mode hors-ligne
+- Agenda du jour en cache SQLite
+- Queue de synchro pour les modifications faites offline
+- Sync automatique à la reconnexion
+
+#### Rôles : DOCTOR, SECRETARY
+
+---
+
+### 3.3 — Notifications Multicanal (Sem 26–27)
+
+#### Logique métier
+
+**Architecture :**
+- Chaque notification passe par BullMQ (jamais d'envoi synchrone)
+- Le service décide du canal selon les préférences du destinataire
+- Fallback : si SMS échoue → email, si email échoue → log d'erreur
+- Templates Handlebars par langue (fr/ar/en) par type d'événement
+
+**Types de notifications :**
+```
+appointment.confirmation → email + SMS (patient + médecin)
+appointment.reminder_j1  → email + SMS (patient)
+appointment.reminder_h2  → SMS (patient)
+appointment.cancellation → email + SMS (patient + médecin)
+pre_consultation.link    → SMS (patient, lien token 48h)
+prescription.ready       → email + SMS (patient, avec PDF joint ou lien)
+receipt.generated        → email (patient)
+chronic.reminder         → email + SMS (patient)
+waitlist.slot_available  → SMS + push (patient)
+message.new              → push (si app mobile installée)
+review.approved          → email (médecin)
+referral.received        → email (médecin destinataire)
+```
+
+**Templates email (Handlebars) :**
+- Structure : `templates/emails/{type}.{lang}.hbs`
+- Variables communes : {{ doctorName }}, {{ patientName }}, {{ date }}, {{ time }}, {{ siteName }}
+
+#### Services à créer
+- `email.service.ts` : Nodemailer + SMTP, pièces jointes PDF, templates Handlebars
+- `sms.service.ts` : Twilio, messages courts, lien SMS
+- `push.service.ts` : Firebase Admin SDK, FCM tokens stockés par user
+- `notifications.service.ts` : orchestration (choisir canal selon préférences user)
+- `notifications.queue.ts` : BullMQ queue "notifications", retry 3x, dead letter queue
+
+#### Entités
+```
+NotificationPreference : userId, emailEnabled, smsEnabled, pushEnabled
+FcmToken : id, userId, token, deviceType (ios|android|web), createdAt
+NotificationLog : id, userId, type, channel, status (SENT|FAILED), error?, sentAt
+```
+
+#### Endpoints
+- PATCH /users/me/notification-preferences → { emailEnabled, smsEnabled, pushEnabled }
+- POST /users/me/fcm-token → { token, deviceType }
+- GET /notifications → liste notifications in-app de l'utilisateur connecté
+- PATCH /notifications/:id/read → marquer comme lue
+- PATCH /notifications/read-all → tout marquer comme lu
+
+#### Frontend
+- Cloche dans navbar avec badge compteur
+- Dropdown notifications (liste 10 dernières)
+- Page /settings/notifications : toggle email / SMS / push par type d'événement
+
+#### Rôles : tous (préférences différentes par rôle)
+
+---
+
+### 3.4 — Téléconsultation (Sem 28–30)
+
+#### Logique métier
+- Intégration Daily.co (ou WebRTC natif)
+- Pour créer une téléconsultation : RDV doit avoir type = TELECONSULT
+- À la confirmation du RDV teleconsult → générer un Daily.co room
+- Lien unique envoyé par SMS + email au patient (valable 30 minutes après l'heure du RDV)
+- La consultation s'ouvre dans l'app web (pas de plugin externe)
+- Enregistrement optionnel : consentement patient requis avant activation
+- La durée est limitée au temps du RDV + 15 minutes de grâce
+
+#### Entités
+```
+TeleconsultSession : id, appointmentId, dailyRoomUrl, dailyRoomName,
+                     startedAt, endedAt, isRecorded, recordingUrl?,
+                     consentGiven, consentGivenAt
+```
+
+#### Endpoints
+- POST /teleconsult/create-room → { appointmentId } → créer room Daily.co, envoyer liens (DOCTOR, SECRETARY)
+- GET /teleconsult/:appointmentId/join → retourner URL de connexion pour le patient (PATIENT)
+- GET /teleconsult/:appointmentId/host → retourner URL host pour le médecin (DOCTOR)
+- POST /teleconsult/:appointmentId/consent → patient donne son accord enregistrement (PATIENT)
+- POST /teleconsult/:appointmentId/end → fermer la room (DOCTOR)
+
+#### Frontend
+- Page /teleconsult/[appointmentId] : interface vidéo (Daily.co embed)
+- Contrôles : micro on/off, caméra on/off, partage écran, chat textuel, raccrocher
+- Salle d'attente patient : "Le médecin va vous rejoindre..."
+- Pop-up consentement enregistrement avant connexion
+- Après consultation : redirection vers questionnaire satisfaction
+
+#### Rôles : DOCTOR (créer room, démarrer, terminer), PATIENT (rejoindre), SECRETARY (créer room, envoyer lien)
+
+---
+
+## 🔴 PHASE 3-BIS — FEATURES CRITIQUES ABSENTES (Semaines 25–32) [PRIORITÉ 2]
+
+---
+
+### 3-BIS.1 — Membres de la Famille (Sem 25)
+
+#### Logique métier
+- Un patient peut gérer plusieurs membres de sa famille (conjoint, enfant, parent, autre)
+- Les membres de famille n'ont pas de compte utilisateur → attachés au compte du patient principal
+- Un RDV peut être pris pour soi-même ou pour un membre de famille
+- La consultation affiche alors : "Patient : [prénom membre] ([relation] de [patient principal])"
+- Le dossier médical du membre est accessible depuis le dossier du patient principal
+- Un membre de famille peut avoir son propre questionnaire pré-consultation
+
+#### Entité
+```
+FamilyMember : id, primaryPatientId, firstName, lastName,
+               relation (ENUM: CONJOINT|ENFANT|PARENT|FRERE_SOEUR|AUTRE),
+               dateOfBirth, gender (ENUM: M|F|OTHER),
+               medicalNotes? (allergies, antécédents de base), createdAt
+```
+
+#### Endpoints
+- GET /family-members → liste membres du patient connecté (PATIENT)
+- POST /family-members → { firstName, lastName, relation, dateOfBirth, gender, medicalNotes? } (PATIENT)
+- PATCH /family-members/:id → modifier (PATIENT)
+- DELETE /family-members/:id → supprimer (PATIENT)
+
+**Modification du booking :**
+- POST /appointments → champ optionnel `familyMemberId`
+- Si familyMemberId présent :
+  - Vérifier que le membre appartient bien au patient connecté
+  - Stocker familyMemberId dans Appointment
+  - Dans la vue médecin : afficher "[Prénom membre] ([relation] de [nom patient])"
+
+#### Frontend
+- `app/[locale]/(dashboard)/patient/family/page.tsx`
+  - Liste des membres avec photo placeholder, nom, relation, âge calculé
+  - Bouton "Ajouter un membre" → modal avec formulaire
+  - Bouton modifier / supprimer par membre
+
+- `BookingWidget.tsx` (mise à jour Step 1)
+  - Nouveau step "Pour qui ?" avant la sélection de spécialité
+  - Options : "Moi-même" + [liste des membres famille avec leur relation]
+  - Si membre sélectionné → son prénom s'affiche dans le récapitulatif
+
+#### Rôles : PATIENT (gestion membres), DOCTOR/SECRETARY (lecture dans la consultation)
+
+---
+
+### 3-BIS.2 — Système Avis + Badges Médecins (Sem 26)
+
+#### Logique métier
+
+**Règles de dépôt d'avis :**
+- Un avis ne peut être déposé que pour un RDV avec status = COMPLETED
+- Maximum 1 avis par RDV (appointmentId unique dans Review)
+- Le formulaire d'avis apparaît automatiquement 2h après la fin du RDV
+- L'avis est en statut PENDING jusqu'à modération par un ADMIN
+- L'avis APPROVED est visible sur le profil public du médecin
+- Le médecin peut répondre (une seule fois) à chaque avis approuvé
+
+**Calcul des badges médecins (cron hebdomadaire BullMQ) :**
+- `RESPONSIVE` : analyser les conversations du médecin → si 90%+ des messages ont reçu une réponse en < 2h sur les 30 derniers jours → badge actif
+- `PUNCTUAL` : analyser les Appointment du médecin → si 85%+ des RDV ont un startedAt dans les 10 minutes de startAt prévu → badge actif
+- `PEDAGOGIC` : calculer moyenne des pedagogyRating (sous-note séparée) → si moyenne > 4.5 → badge actif
+- Les badges sont recalculés chaque lundi à 3h du matin
+- Stockés dans `Doctor.badges: string[]`
+
+**Certification médecin :**
+- ADMIN vérifie manuellement les documents d'un médecin
+- PATCH /doctors/:id/certify → isCertified = true + badge "Médecin certifié" affiché partout
+- Envoi email au médecin pour l'informer
+
+#### Entités
+```
+Review : id, patientId, doctorId, appointmentId, doctorSpaceId,
+         rating (1-5), punctualityRating (1-5), listeningRating (1-5), pedagogyRating (1-5),
+         comment (min 20 chars), replyContent?, repliedAt?,
+         isVerified (appointmentId vérifié = COMPLETED),
+         moderationStatus (ENUM: PENDING|APPROVED|REJECTED),
+         moderationReason?, moderatedBy?, moderatedAt?, createdAt
+```
+
+#### Endpoints
+- POST /reviews (PATIENT, vérifie appointment COMPLETED)
+  body: { appointmentId, rating, punctualityRating, listeningRating, pedagogyRating, comment }
+- GET /reviews/doctor/:id → avis approuvés (PUBLIC)
+  → include: { averageRating, totalCount, distribution: {1:n, 2:n, 3:n, 4:n, 5:n} }
+- GET /reviews/pending → liste à modérer (ADMIN)
+- PATCH /reviews/:id/moderate → { status, reason? } (ADMIN)
+- PATCH /reviews/:id/reply → { replyContent } (DOCTOR)
+- DELETE /reviews/:id (ADMIN ou auteur du patient si PENDING)
+- POST /admin/recalculate-badges (ADMIN)
+- PATCH /doctors/:id/certify (ADMIN)
+
+#### Composants frontend
+- `components/reviews/ReviewForm.tsx`
+  - Affiché dans /patient/appointments pour chaque RDV COMPLETED sans avis
+  - 5 étoiles cliquables avec labels (Très déçu / Déçu / Neutre / Satisfait / Excellent)
+  - 3 sous-notes identiques (Ponctualité / Écoute / Pédagogie)
+  - Champ texte commentaire (compteur caractères, min 20)
+  - Soumission → toast "Votre avis a été soumis et sera vérifié avant publication"
+  - Masquer le formulaire après soumission
+
+- `components/reviews/ReviewsList.tsx`
+  - Note globale avec étoiles + nombre d'avis
+  - Mini graphique distribution (barres horizontales 1-5 étoiles)
+  - Tri : plus récent / mieux noté / moins bien noté
+  - Chaque avis : note, commentaire, date, badge "Avis vérifié", réponse médecin
+  - Bouton "Répondre" (affiché uniquement pour le médecin connecté)
+
+- `app/[locale]/(dashboard)/admin/moderation/page.tsx`
+  - Liste des avis PENDING avec : note, commentaire, infos patient anonymisées, médecin concerné
+  - Boutons Approuver / Rejeter + champ raison si rejet
+  - Filtres : médecin, date, note
+
+- Affichage badges sur DoctorCard et profil public : icônes avec tooltip explicatif
+- Badge "Médecin certifié ✓" prominent sur le profil et dans les résultats de recherche
+
+#### Rôles
+- PATIENT : créer un avis (après RDV COMPLETED)
+- DOCTOR : répondre aux avis, voir ses badges
+- ADMIN : modérer, certifier, recalculer badges
+- PUBLIC/PATIENT : lire les avis approuvés
+
+---
+
+### 3-BIS.3 — Questionnaire Pré-Consultation (Sem 27)
+
+#### Logique métier
+
+**Flux complet :**
+1. Patient confirme un RDV → système génère un token UUID (TTL 48h) associé au preConsultationForm
+2. BullMQ job envoie SMS + email au patient avec le lien : https://ophthocare.com/pre-consultation/fill/{token}
+3. Patient remplit le formulaire (avec ou sans connexion, via le token)
+4. Réponses sauvegardées avec timestamp
+5. Si symptômes urgents détectés (sélection ≠ "Aucun") → notification immédiate DOCTOR + SECRETARY
+6. Quand médecin ouvre la consultation → notification "Questionnaire pré-consultation disponible"
+7. Médecin peut importer les réponses en 1 clic dans les champs de la consultation
+
+**Génération du formulaire :**
+- Charger les questions du template de la spécialité du médecin
+- Ajouter systématiquement la question urgence en dernier (pour toutes les spécialités)
+- Rendu via le même SpecialtyFormRenderer que les consultations (cohérence)
+
+**Détection urgence :**
+- Question multiselect avec options : Douleur thoracique | Difficulté respiratoire | Perte de conscience | Paralysie subite | Vision soudainement floue | Aucun de ces symptômes
+- Si sélection contient autre chose que "Aucun de ces symptômes" :
+  - isUrgent = true sur le PreConsultationForm
+  - WebSocket push immédiat vers les utilisateurs connectés du DoctorSpace
+  - SMS au médecin si disponible : "⚠️ URGENT : Patient [nom] signale [symptôme] — RDV le [date]"
+
+#### Entités
+```
+PreConsultationForm : id, patientId, doctorId, doctorSpaceId, appointmentId, specialtyId,
+                      answers (JSON: Record<string, unknown>),
+                      isUrgent, urgentSymptoms (string[]),
+                      fillToken (UUID), tokenExpiresAt,
+                      submittedAt?, importedAt?, importedBy?, createdAt
+```
+
+#### Endpoints
+- GET /pre-consultation/template/:specialtyCode → questions JSON (PUBLIC avec token ou AUTH)
+- POST /pre-consultation → soumettre (PATIENT authentifié)
+- POST /pre-consultation/fill/:token → soumettre via token (PUBLIC, sans auth)
+- GET /pre-consultation/check/:token → vérifier validité token (PUBLIC)
+- GET /pre-consultation/:appointmentId → lire formulaire (DOCTOR, SECRETARY)
+- POST /consultations/:id/import-pre-consultation → { preFormId } → importer dans consultation (DOCTOR)
+
+#### Composants frontend
+- `app/[locale]/(public)/pre-consultation/[token]/page.tsx`
+  - Page accessible sans connexion via lien SMS
+  - Logo plateforme + "Bonjour [prénom], préparez votre consultation avec Dr [nom] du [date]"
+  - Formulaire dynamique via SpecialtyFormRenderer
+  - Question urgence mise en avant visuellement (fond rouge si sélection urgente)
+  - Si urgence détectée → alerte rouge : "Vos symptômes peuvent nécessiter une attention urgente. Appelez le 15 ou rendez-vous aux urgences si besoin."
+  - Soumission → "Merci ! Votre médecin a reçu vos informations."
+
+- `app/[locale]/(dashboard)/patient/appointments/page.tsx` (mise à jour)
+  - Pour chaque RDV CONFIRMED : section "Questionnaire pré-consultation"
+  - Statuts : ⚪ Non rempli | ✅ Rempli le [date] | ⚠️ Rempli - URGENT
+  - Bouton "Remplir le questionnaire" si non rempli
+
+- Dans l'interface médecin (consultation ouverte) :
+  - Badge "Questionnaire disponible" si preConsultationForm présent
+  - Bouton "Importer les données" → preview des réponses → confirmer import
+
+#### Rôles
+- PATIENT : remplir (authentifié ou via token)
+- PUBLIC : remplir via token SMS
+- DOCTOR : lire, importer dans la consultation
+- SECRETARY : lire (savoir si rempli ou non pour l'accueil)
+
+---
+
+### 3-BIS.4 — Suivi Chronique Complet (Sem 28)
+
+#### Logique métier
+
+**Plans de soins chroniques :**
+- Un médecin crée un plan pour une condition chronique d'un patient (diabète, HTA, glaucome, asthme...)
+- Le plan contient des jalons (milestones) : prises de sang, consultations de contrôle, vaccins...
+- Chaque jalon a une date d'échéance et un statut (à faire / fait)
+- Le plan indique la date du prochain contrôle recommandé (nextCheckupAt)
+
+**Rappels automatiques (BullMQ cron quotidien 8h00) :**
+- Chercher tous les plans actifs où nextCheckupAt est dans ≤ 7 jours
+- Vérifier si le patient a un RDV CONFIRMED ou PENDING dans les 14 prochains jours
+- Si pas de RDV → envoyer :
+  - SMS patient : "Bonjour [prénom], Dr [nom] vous rappelle pour votre contrôle [condition]. Prenez RDV : [lien]"
+  - Email patient : version longue avec le détail du plan
+  - Notification dans l'app médecin : "Patient [nom] n'a pas de RDV de contrôle prévu pour [condition]"
+
+**Widget alertes médecin :**
+- Sur le dashboard médecin : "Patients chroniques en retard"
+- Critère : nextCheckupAt dépassé depuis > 14 jours et pas de RDV récent
+- Affiché avec badge rouge dans la sidebar
+
+#### Entités
+```
+ChronicCarePlan : id, patientId, doctorId, doctorSpaceId,
+                  condition (ex: 'Diabète type 2', 'HTA', 'Glaucome'),
+                  milestones (JSON: CareMilestone[]),
+                  nextCheckupAt, checkupIntervalDays, notes, isActive, createdAt
+
+CareMilestone : { id, title, dueDate, isDone, completedAt?, notes? }
+
+ChronicReminderLog : id, planId, patientId, type (SMS|EMAIL|PUSH), sentAt
+```
+
+#### Endpoints
+- GET /chronic-care/patient/:patientId (DOCTOR, SECRETARY de l'espace)
+- POST /chronic-care (DOCTOR only)
+  body: { patientId, condition, milestones, nextCheckupAt, checkupIntervalDays, notes }
+- PATCH /chronic-care/:id (DOCTOR only)
+- PATCH /chronic-care/:id/milestone/:milestoneId → { isDone: true, completedAt?, notes? }
+- DELETE /chronic-care/:id (DOCTOR only)
+- GET /chronic-care/alerts → patients en retard dans l'espace (DOCTOR, SECRETARY)
+- GET /chronic-care/plans → tous les plans actifs de l'espace (DOCTOR)
+
+#### Composants frontend
+- `app/[locale]/(dashboard)/doctor/[doctorId]/chronic-care/page.tsx`
+  - Liste patients chroniques : photo, nom, condition, dernier RDV, prochain contrôle, statut
+  - Filtre par condition (dropdown avec les conditions des plans actifs)
+  - Statuts visuels : 🟢 À jour | 🟡 Bientôt | 🔴 En retard
+  - Bouton "Créer un plan de soins" → modal
+
+- `components/medical/ChronicCarePlanCard.tsx`
+  - En-tête : condition + icône + statut global
+  - Section jalons : liste avec checkboxes, dates, notes
+  - Prochain contrôle : date + jours restants (ou dépassés en rouge)
+  - Boutons : Modifier plan | Marquer jalon | Export PDF du plan
+
+- Widget dashboard médecin : compteur patients chroniques en retard avec lien vers la page
+
+#### Rôles
+- DOCTOR : créer, modifier, suivre les plans
+- SECRETARY : lire les plans, voir les alertes
+- PATIENT : lire son propre plan (lecture seule sur /dashboard/patient/chronic-care)
+
+---
+
+### 3-BIS.5 — Parcours de Soins + Référence Confrère (Sem 29)
+
+#### Logique métier
+
+**Flux de référence :**
+1. Médecin A décide de référer un patient vers le Médecin B
+2. Médecin A remplit le formulaire : sélection médecin B, motif, corps de la lettre
+3. Option "Suggestion IA" : POST /ai/draft-report avec type REFERRAL → pré-remplir la lettre
+4. Preview PDF avant envoi
+5. Confirmation → simultanément :
+   - Génération PDF courrier de référence (Puppeteer)
+   - Email à Médecin B avec PDF en pièce jointe
+   - SMS au patient avec lien de pré-inscription : /book?doctor=[idB]&ref=[referralId]
+6. Médecin B reçoit la référence dans son tableau de bord
+7. Médecin B accepte → status ACCEPTED
+8. Médecin B consulte le patient → status COMPLETED
+
+**Annuaire partenaires :**
+- Les DoctorSites peuvent être marqués comme partenaires (laboratoire, pharmacie, imagerie)
+- Le médecin peut chercher des partenaires proches pour orienter le patient
+- Affichage sur la lettre de référence : "Adressé à : Dr [nom] — [spécialité] — [site] — [ville]"
+
+#### Entités
+```
+Referral : id, fromDoctorId, toDoctorId, patientId, fromDoctorSpaceId,
+           reason, letterContent, pdfUrl, linkToken,
+           status (ENUM: PENDING|ACCEPTED|COMPLETED|CANCELLED), createdAt
+
+DoctorSite : ajouter partnerTypes: string[] (PHARMACY|LAB|IMAGING|HOSPITAL|CLINIC)
+```
+
+#### Endpoints
+- POST /referrals (DOCTOR)
+  body: { toDoctorId, patientId, reason, letterContent }
+  → générer PDF (BullMQ) → email médecin destinataire → SMS patient avec lien
+- GET /referrals/sent → (DOCTOR, filtrées par son DoctorSpace)
+- GET /referrals/received → (DOCTOR, référé vers lui)
+- PATCH /referrals/:id/accept (médecin destinataire)
+- PATCH /referrals/:id/complete (médecin destinataire, après consultation)
+- PATCH /referrals/:id/cancel (médecin émetteur)
+- GET /partners?type=LAB&city=Tanger → recherche partenaires (DOCTOR, SECRETARY)
+
+#### Composants frontend
+- Dans le dossier patient (/doctor/[id]/patients/[patientId]) :
+  - Bouton "Référer vers un confrère" dans les actions rapides
+  - Modal référence en 5 étapes :
+    1. Recherche + sélection médecin destinataire (barre de recherche dans l'annuaire)
+    2. Motif de la référence (texte court)
+    3. Corps de la lettre (ReportEditor avec bouton "Suggestion IA")
+    4. Preview PDF
+    5. Confirmation + récapitulatif (email envoyé à Dr [nom] + SMS au patient)
+
+- `app/[locale]/(dashboard)/doctor/[doctorId]/referrals/page.tsx`
+  - Onglets : Envoyées | Reçues
+  - Chaque référence : patient, médecin concerné, motif, date, statut avec timeline
+  - Actions : voir lettre PDF, accepter (si reçue), compléter (si reçue + acceptée)
+
+#### Rôles
+- DOCTOR : créer, voir ses références envoyées et reçues, accepter, compléter
+- SECRETARY : voir les références de l'espace, envoyer le lien SMS
+- PATIENT : recevoir le lien de pré-inscription par SMS
+
+---
+
+### 3-BIS.6 — Multi-Langue FR/AR/EN + RTL (Sem 30)
+
+#### Logique métier
+
+**Langues supportées :**
+- Français (fr) : langue par défaut
+- Arabe (ar) : avec direction RTL, chiffres arabes optionnels
+- Anglais (en) : pour les médecins/patients internationaux
+
+**Sélection de langue :**
+- Détection automatique à l'inscription (navigator.language)
+- Modifiable à tout moment via LanguageSwitcher
+- Stockée : localStorage côté client + PATCH /users/me { lang: 'ar' } côté serveur
+- La langue détermine la langue des emails/SMS reçus par l'utilisateur
+
+**RTL (Right To Left) pour l'arabe :**
+- `<html dir="rtl" lang="ar">` quand la locale est 'ar'
+- Toutes les marges, paddings, flexbox, grid → utiliser les variantes logiques CSS :
+  - `margin-inline-start` au lieu de `margin-left`
+  - Tailwind : `ms-4` (margin-start) au lieu de `ml-4`, `ps-4` au lieu de `pl-4`
+  - `me-4` (margin-end) au lieu de `mr-4`, `pe-4` au lieu de `pr-4`
+- La sidebar glisse depuis la droite en RTL
+- Les icônes directionnelles (flèches, chevrons) sont retournées horizontalement
+- Le calendrier suit le sens RTL
+- Recharts : prop `rtl={locale === 'ar'}` sur les graphiques
+
+**PDF multilingue :**
+- Le PDF est généré dans la langue du médecin (Doctor.lang)
+- Si médecin lang = 'ar' → ordonnances bilingues (français à gauche, arabe à droite)
+- Utiliser une police supportant l'arabe : Noto Naskh Arabic
+
+#### Configuration
+```
+next.config.ts :
+  const withNextIntl = createNextIntlPlugin('./src/i18n.ts')
+  module.exports = withNextIntl({
+    // ...
+  })
+
+src/i18n.ts :
+  import { getRequestConfig } from 'next-intl/server'
+  export default getRequestConfig(async ({ locale }) => ({
+    messages: (await import(`../messages/${locale}.json`)).default
+  }))
+
+Structure messages/ :
+  messages/fr.json
+  messages/ar.json
+  messages/en.json
+```
+
+**Clés de traduction à créer (tous les 3 fichiers) :**
+- nav.* : navigation
+- auth.* : login, register, erreurs
+- doctor.* : profil, spécialités, horaires
+- patient.* : profil, dossier
+- appointment.* : statuts, booking, calendrier
+- consultation.* : formulaires, champs médicaux
+- specialty.* : noms des 18+ spécialités et leurs champs
+- documents.* : ordonnances, reçus, comptes rendus
+- reviews.* : avis, badges
+- notifications.* : messages de notification
+- common.* : boutons, validations, erreurs génériques
+
+#### Endpoints backend mis à jour
+- PATCH /users/me → accepter `{ lang: 'fr'|'ar'|'en' }`
+- Tous les services email/SMS → utiliser user.lang pour choisir le template
+
+#### Composants frontend
+- `components/common/LanguageSwitcher.tsx`
+  - 3 options avec drapeaux + label natif : 🇫🇷 Français | 🇸🇦 العربية | 🇬🇧 English
+  - Disponible dans le header public ET dans les paramètres utilisateur
+  - Changement immédiat (next-intl router.replace)
+
+- `app/[locale]/layout.tsx` (root layout)
+  - `<html lang={locale} dir={locale === 'ar' ? 'rtl' : 'ltr'}>`
+
+#### Rôles : tous (chacun choisit sa langue)
+
+---
+
+### 3-BIS.7 — Devises Configurables + Export Comptabilité (Sem 31)
+
+#### Logique métier
+
+**Devises supportées :**
+- MAD (Dirham marocain) → symbole : د.م.
+- EUR (Euro) → symbole : €
+- USD (Dollar américain) → symbole : $
+- GBP (Livre sterling) → symbole : £
+
+**Application des devises :**
+- Le médecin configure sa devise préférée dans ses paramètres
+- Tous les tarifs, reçus et exports utilisent cette devise
+- Un médecin avec plusieurs sites peut avoir des tarifs différents par site (même devise)
+- Pas de conversion entre devises (la devise est informative)
+
+**Export Excel mensuel (ExcelJS) :**
+- Colonnes : Date | Patient | Acte | Montant | Devise | Statut | N° séquentiel | Mode paiement
+- Ligne de totaux en bas : Facturé total | Payé total | En attente | Partiel
+- Formatage : colonnes ajustées, en-tête coloré, montants alignés à droite
+- Nom du fichier : `comptabilite-{YYYY-MM}-Dr{nom}.xlsx`
+
+**Export PDF mensuel :**
+- Tableau récapitulatif avec le même contenu
+- Page de couverture : logo + médecin + période + totaux généraux
+- Générée par Puppeteer, uploadée S3, URL signée retournée
+
+**Résumé financier :**
+- API agrégée calculée en SQL (pas en mémoire) pour de bonnes performances
+- Inclut le pourcentage de recouvrement (paidTotal / billedTotal * 100)
+
+#### Modification entités
+```
+Doctor : ajouter preferredCurrency (string, défaut 'MAD')
+Receipt : ajouter currency (string), paymentMethod (CASH|CARD|INSURANCE|WIRE)
+```
+
+#### Endpoints
+- PATCH /doctors/me → accepter `{ preferredCurrency: 'MAD'|'EUR'|'USD'|'GBP' }`
+- GET /receipts/summary?month=YYYY-MM (DOCTOR, SECRETARY)
+  → { totalBilled, totalPaid, totalUnpaid, totalPartial, totalPartialAmount,
+      consultationCount, byPaymentMethod: Record<string, number>, recoveryRate }
+- GET /receipts/export/excel?month=YYYY-MM (DOCTOR, SECRETARY)
+  → téléchargement direct, Content-Disposition: attachment
+- GET /receipts/export/pdf?month=YYYY-MM (DOCTOR, SECRETARY)
+  → URL S3 signée du PDF mensuel
+
+#### Composants frontend
+- `app/[locale]/(dashboard)/doctor/[doctorId]/settings/billing/page.tsx`
+  - Sélecteur devise préférée
+  - Aperçu : "Vos reçus seront libellés en [MAD]"
+
+- `app/[locale]/(dashboard)/doctor/[doctorId]/billing/page.tsx` (secrétaire + médecin)
+  - Sélecteur de mois (mois courant par défaut)
+  - Cards récapitulatif : Facturé / Payé / En attente / Partiel + taux de recouvrement
+  - Tableau des reçus avec modification statut inline (dropdown au clic)
+  - Boutons Export Excel + Export PDF
+  - Section "Ajouter un reçu rapide" (acte libre, montant, patient)
+
+#### Rôles : DOCTOR (configuration devise, export), SECRETARY (export, gestion reçus)
+
+---
+
+### 3-BIS.8 — Liste d'Attente Automatique (Sem 32)
+
+#### Logique métier
+
+**Inscription sur liste d'attente :**
+- Déclenché quand le booking widget ne trouve aucun créneau disponible dans la période souhaitée
+- Le patient choisit une plage de dates préférée (ex : "entre le 20 et le 30 janvier")
+- Stocké en DB avec status WAITING
+
+**Déclenchement automatique (event-driven via BullMQ) :**
+1. Un RDV est annulé → événement `appointment.cancelled` publié
+2. BullMQ job `waitlist-notifier` :
+   a. Chercher toutes les inscriptions WAITING pour ce médecin + ce site
+   b. Trier par date d'inscription (le plus ancien en premier)
+   c. Vérifier si la date du créneau libéré est dans la plage préférée du patient
+   d. Premier patient correspondant → SMS + push : "Un créneau vient de se libérer le [date] à [heure] avec Dr [nom]. Réservez avant [now + 2h] : [lien direct]"
+   e. status → NOTIFIED, notifiedAt = now
+3. Si pas de réponse en 2h (BullMQ delayed job) :
+   a. Le créneau est proposé au patient suivant dans la liste
+   b. status du premier → EXPIRED
+
+**Lien direct de booking :**
+- Le lien dans le SMS contient le créneau pré-sélectionné : `/book?doctor={id}&site={id}&slot={startAt}&ref=waitlist`
+- Le booking widget pré-remplit toutes les sélections automatiquement
+- Si le patient clique → status BOOKED
+
+#### Entités
+```
+Waitlist : id, patientId, doctorId, doctorSpaceId, siteId,
+           preferredDateStart, preferredDateEnd, durationMinutes,
+           status (ENUM: WAITING|NOTIFIED|BOOKED|EXPIRED|CANCELLED),
+           notifiedAt?, notificationCount, createdAt
+```
+
+#### Endpoints
+- POST /waitlist (PATIENT)
+  body: { doctorId, siteId, preferredDateStart, preferredDateEnd, durationMinutes? }
+- GET /waitlist/doctor/:id (DOCTOR, SECRETARY) → liste d'attente de l'espace
+- GET /waitlist/me (PATIENT) → mes inscriptions actives
+- DELETE /waitlist/:id (PATIENT) → se désinscrire
+
+#### Frontend
+- `BookingWidget.tsx` (quand aucun créneau disponible) :
+  - Message : "Aucun créneau disponible pour cette période."
+  - Proposition : "Voulez-vous rejoindre la liste d'attente ? Vous serez notifié dès qu'un créneau se libère."
+  - Formulaire : plage de dates souhaitée → soumission → confirmation
+
+- `app/[locale]/(dashboard)/patient/appointments/page.tsx` (section en bas) :
+  - "Mes listes d'attente" : médecin, site, plage souhaitée, statut, date d'inscription
+  - Bouton "Se désinscrire"
+
+- `app/[locale]/(dashboard)/doctor/[doctorId]/waitlist/page.tsx` :
+  - Liste patients en attente : nom, plage souhaitée, date inscription, statut
+  - Bouton "Notifier maintenant" (si médecin veut forcer la notification)
+
+#### Rôles : PATIENT (s'inscrire, se désinscrire), DOCTOR/SECRETARY (voir la liste, forcer notification)
+
+---
+
+## 🤖 PHASE 4-BIS — IA COMPLÈTE + EXAMENS (Semaines 33–42) [PRIORITÉ 3]
+
+---
+
+### 4-BIS.1 — Module IA Complet (Sem 33–37)
+
+#### Logique métier
+
+**Principe fondamental :**
+- L'IA est pédagogique et assistive, JAMAIS prescriptive
+- Chaque réponse inclut un disclaimer automatique
+- Toutes les interactions sont auditées (qui, quand, quel patient)
+- Rate limiting strict pour éviter les coûts excessifs
+
+**1. Résumé dossier patient :**
+- Charger toutes les consultations + ordonnances + examens du patient dans l'espace
+- Construire un prompt structuré (JSON des données médicales)
+- Retourner un résumé en 4 sections : Antécédents clés | Traitements actuels | Derniers examens | Points de vigilance
+- Cache Redis 30min : si le résumé existe et que les données n'ont pas changé → retourner le cache
+- Invalider le cache quand une nouvelle consultation est créée pour ce patient
+
+**2. Suggestions diagnostiques différentielles :**
+- Input : données de la consultation en cours (champs remplis du template, observations)
+- Output : liste de 3 à 5 diagnostics différentiels AVEC justification et examens suggérés
+- Format strict avec disclaimer en début de réponse
+- Ne pas stocker les suggestions (pédagogique uniquement)
+
+**3. Rédaction de documents :**
+- Charger le contenu de la consultation (observations, diagnostic posé, plan)
+- Générer un brouillon du document demandé (compte rendu, certificat, lettre de référence)
+- Retourner uniquement le texte brouillon → le médecin l'édite avant de finaliser
+- JAMAIS sauvegardé automatiquement
+
+**4. Analyse évolution examens :**
+- Comparer les valeurs JSON de deux examens du même type
+- Détecter les variations significatives (seuils configurables par type d'examen)
+- Générer une alerte textuelle : "Entre [date1] et [date2], la glycémie a augmenté de 0.8 g/L à 1.4 g/L (+75%)"
+- Stocker l'alerte en DB si la variation est défavorable
+
+**5. Chatbot multi-tour (streaming) :**
+- Mode streaming SSE (Server-Sent Events) pour l'affichage progressif
+- Le contexte envoyé à GPT-4o = résumé du dossier (pas les données brutes, pour limiter les tokens)
+- Historique de la conversation inclus dans chaque appel API (stateless GPT)
+- Conversation loguée en DB (anonymisée : patientId haché, pas de nom)
+- Accessible uniquement par DOCTOR et TRAINEE
+
+**6. Quiz pédagogique (TRAINEE uniquement) :**
+- Input : données d'un cas clinique (consultation réelle)
+- GPT-4o génère 5 QCM avec une bonne réponse + 3 leurres plausibles + explication
+- Difficulté : EASY (cas simples) | MEDIUM (cas courants) | HARD (cas rares)
+- Résultat stocké dans TraineeProgress (score, date, spécialité)
+
+**7. Explication d'examen :**
+- Adapter le niveau de langage : PROFESSIONAL (médecin/stagiaire) ou STUDENT (étudiant)
+- PROFESSIONAL : terminologie médicale complète
+- STUDENT : définitions simples + analogies + contexte clinique
+
+#### Entités
+```
+AiConversationLog : id, userId (haché), doctorSpaceId, sessionId, messagesCount, totalTokens, createdAt
+AiAuditLog : id, userId, doctorSpaceId, action (SUMMARIZE|DIAGNOSE|DRAFT|CHAT|QUIZ|EXPLAIN|ANALYZE), patientId?, consultationId?, tokensUsed, createdAt
+TraineeProgress : id, traineeId, doctorSpaceId, quizResults (JSON: [{consultationId, score, difficulty, date}]), totalQuizzes, averageScore
+ExamAlert : id, examId1, examId2, patientId, doctorSpaceId, alertContent, isRead, createdAt
+```
+
+#### Endpoints
+- POST /ai/summarize → { patientId, specialtyId } → { summary: { antecedents, treatments, exams, vigilance } }
+- POST /ai/diagnoses → { consultationId } → { diagnoses: [{ name, justification, suggestedExams }], disclaimer }
+- POST /ai/draft-report → { consultationId, reportType } → { draft: string }
+- POST /ai/analyze-exams → { examId1, examId2 } → { analysis: string, alerts?: ExamAlert[] }
+- POST /ai/chat → { messages: ChatMessage[], patientId, consultationId } → SSE stream
+- POST /ai/quiz → { consultationId, difficulty } → { questions: QcmQuestion[] } (TRAINEE only)
+- POST /ai/explain-exam → { examId, patientLevel } → { explanation: string }
+
+**Tous les endpoints IA :**
+- Guard: DOCTOR ou TRAINEE (jamais SECRETARY, ADMIN, PATIENT)
+- Rate limiting: 20 req/min/user (ThrottlerGuard)
+- Audit log systématique
+
+#### Composants frontend
+
+- `components/ai/AiChatbot.tsx`
+  - Interface chat (bulles bleues utilisateur / grises IA)
+  - Streaming SSE : useEventSource hook, affichage token par token (effet machine à écrire)
+  - Disclaimer fixe en haut : "⚠️ Outil d'aide pédagogique. Ne remplace pas le jugement médical."
+  - Raccourcis rapides (chips) : "Résumer le dossier" | "Suggestions diagnostiques" | "Rédiger un compte rendu" | "Générer un quiz"
+  - Indicateur "L'IA génère une réponse..." pendant le streaming
+  - Bouton "Exporter la conversation en PDF"
+  - Bouton "Nouvelle conversation" (efface l'historique local)
+
+- `components/ai/AiSummary.tsx`
+  - 4 sections accordéon : Antécédents clés | Traitements actuels | Derniers examens | Points de vigilance
+  - Bouton "Régénérer" (invalide le cache Redis et rappelle l'API)
+  - Indicateur "Généré par IA le [date]" en bas
+  - Bouton copier dans le presse-papier (pour coller dans un document)
+  - Skeleton loading pendant la génération
+
+- `components/ai/AiDiagnosisSuggestions.tsx`
+  - Liste accordéon par diagnostic différentiel
+  - Chaque item : nom du diagnostic + justification + examens suggérés
+  - Badge "Pédagogique uniquement" sur chaque item
+  - Bouton "Inclure dans le compte rendu" → ouvre ReportEditor avec ce texte pré-inséré
+  - Disclaimer rouge en haut
+
+- `components/ai/AiQuiz.tsx` (TRAINEE uniquement)
+  - Stepper : une question à la fois
+  - 4 options (boutons)
+  - Après sélection : feedback immédiat (vert = correct, rouge = incorrect)
+  - Explication détaillée après chaque réponse
+  - Score final avec récapitulatif des erreurs
+  - Bouton "Refaire" ou "Nouveau quiz"
+
+- `app/[locale]/(dashboard)/doctor/[doctorId]/ai-assistant/page.tsx`
+  - Layout 3 colonnes : dossier patient | chatbot | suggestions
+  - Sélection patient depuis une liste déroulante
+  - Tous les composants IA assemblés et interconnectés
+
+- `app/[locale]/(dashboard)/trainee/[id]/ai-learning/page.tsx`
+  - Chatbot + Quiz + Explication examens
+  - Historique des sessions (date, durée, score quiz)
+  - Barre de progression : % dossiers étudiés, score moyen
+
+#### Rôles
+- DOCTOR : tout (résumé, diagnoses, draft, analyzeExams, chat, explainExam)
+- TRAINEE : chat + quiz + explainExam (PAS résumé complet, PAS diagnoses)
+- SECRETARY : aucun accès IA médicale
+- ADMIN : aucun accès IA médicale
+- PATIENT : aucun accès IA
+
+---
+
+### 4-BIS.2 — Examens DICOM Complet (Sem 38–40)
+
+#### Logique métier
+
+**Types de fichiers supportés :**
+- PDF (résultats biologiques, comptes rendus externes)
+- JPEG / PNG / TIFF (photos médicales, documents scannés)
+- DICOM (.dcm) : images médicales (radio, scanner, IRM, écho, fond d'œil, OCT)
+
+**Flux d'upload :**
+1. Upload fichier → backend reçoit le buffer
+2. Si DICOM : envoi vers Orthanc (serveur DICOM) → stocker orthancStudyId
+3. Sinon : upload direct vers S3 bucket privé chiffré
+4. Créer entité Exam en DB
+5. Retourner URL d'accès (signée S3 ou WADO Orthanc)
+
+**Viewer DICOM :**
+- Cornerstone.js pour le rendu des images DICOM
+- WADO URL : récupérée depuis Orthanc → passée à Cornerstone
+- Fenêtrage (Window/Level) : présets selon la modalité (CT, MRI, XR, US, OCT)
+- Scroll entre les coupes pour les séries volumiques (CT, IRM)
+
+**Annotations :**
+- Stockées en DB (pas dans le fichier DICOM pour ne pas le modifier)
+- Types : ARROW (flèche avec texte), CIRCLE (cercle), TEXT (texte libre), MEASUREMENT (distance en mm)
+- Coordonnées en pourcentage de l'image (relatif, indépendant de la résolution)
+- Visible uniquement par le médecin qui a annoté (ou tous du DoctorSpace ?)
+
+**Comparaison chronologique :**
+- Sélectionner 2 examens du même type pour un patient
+- Affichage split 50/50 avec scroll et zoom synchronisés
+- Si les examens ont des valeurs JSON structurées → tableau diff côte à côte
+
+#### Entités
+```
+Exam : id, patientId, doctorId, doctorSpaceId, type (BIOLOGIE|IMAGERIE|ECG|EFR|OCT|...),
+       subType (RADIO|SCANNER|IRM|ECHO|OCT|...), label, fileUrl, orthancStudyId?,
+       results (JSON: valeurs structurées si disponibles), reportContent?,
+       uploadedAt, createdAt
+
+ExamAnnotation : id, examId, userId, doctorSpaceId,
+                 type (ARROW|CIRCLE|TEXT|MEASUREMENT),
+                 data (JSON: {x, y, x2?, y2?, text?, color}),
+                 createdAt
+```
+
+#### Endpoints
+- POST /exams/upload → upload fichier (multipart/form-data) (DOCTOR, SECRETARY)
+  body: { file, patientId, type, subType, label, examDate }
+- GET /exams/patient/:patientId (DOCTOR, SECRETARY, TRAINEE de l'espace)
+- GET /exams/:id → métadonnées + URL accès
+- DELETE /exams/:id (DOCTOR)
+- GET /exams/:id/dicom-url → URL WADO pour Cornerstone (DOCTOR, TRAINEE)
+- POST /exams/:id/annotations (DOCTOR, TRAINEE)
+- GET /exams/:id/annotations
+- DELETE /exams/:id/annotations/:annotationId (auteur ou DOCTOR)
+- GET /exams/compare?examId1=&examId2= → URLs signées S3 (1h) + diff résultats
+- GET /exams/types?specialtyId= → types d'examens standards pour la spécialité
+
+#### Composants frontend
+
+- `components/medical/ExamViewer.tsx` (images non-DICOM)
+  - Affichage image avec zoom (molette) + pan (drag)
+  - Rotation (boutons 90°)
+  - Toolbar annotations : sélecteur (flèche / cercle / texte / mesure)
+  - Canvas overlay pour dessiner les annotations
+  - Bouton "Sauvegarder annotations"
+  - Bouton "Télécharger l'image"
+
+- `components/medical/DicomViewer.tsx`
+  - Intégration Cornerstone.js (cornerstone-core + cornerstone-wado-image-loader)
+  - Chargement image via URL WADO depuis Orthanc
+  - Toolbar : zoom / pan / window-level / longueur / angle
+  - Slider coupes (pour séries volumiques)
+  - Présets fenêtrage par modalité (poumons, os, tissus mous, cerveau...)
+  - Affichage métadonnées DICOM (patient, date, modalité) en overlay
+
+- `components/medical/ExamComparison.tsx`
+  - Layout split 50/50
+  - Scroll et zoom synchronisés entre les deux panels
+  - Badge date sur chaque panel
+  - Si valeurs JSON disponibles : tableau diff côte à côte avec variation %
+  - Couleur rouge si variation défavorable
+
+- `app/[locale]/(dashboard)/doctor/[doctorId]/exams/page.tsx`
+  - Vue par patient : sélectionner patient → voir ses examens
+  - Vue globale (tous les examens de l'espace) avec filtres
+  - Filtres : type, subType, patient, date range
+  - Bouton upload (drag & drop zone)
+  - Bouton "Comparer" → sélectionner 2 examens → ouvrir ExamComparison
+
+#### Rôles
+- DOCTOR : tout (upload, view, annotate, compare, delete)
+- SECRETARY : upload, view
+- TRAINEE : view, annotate (pas delete)
+- PATIENT : view ses propres examens (/dashboard/patient/exams)
+
+---
+
+### 4-BIS.3 — OCR + Extraction Automatique (Sem 41–42)
+
+#### Logique métier
+
+**Processus OCR :**
+1. Patient ou secrétaire uploade un PDF de résultats biologiques
+2. Backend extrait le texte avec Tesseract.js (ou Azure OCR si budget)
+3. Parser le texte avec des regex + patterns connus pour extraire les valeurs structurées
+4. Retourner les valeurs extraites avec un score de confiance
+5. Le médecin voit les valeurs extraites et peut les corriger
+6. Seulement après validation → importer dans le dossier
+
+**Patterns reconnus (à implémenter) :**
+- Glycémie : variations de "Glycémie", "Glucose", "blood glucose" + valeur + unité (g/L, mmol/L)
+- HbA1c : "HbA1c", "Hémoglobine glyquée" + valeur + unité (%)
+- Tension : "TA", "BP", "Tension" + valeur systolique/diastolique (ex: 140/90 mmHg)
+- Numération formule sanguine (NFS) : Hémoglobine, Hématocrite, Leucocytes, Plaquettes
+- Bilan lipidique : Cholestérol total, LDL, HDL, Triglycérides
+- Créatinine, Urée, ASAT, ALAT, Bilirubine, TSH, T4L
+
+**Indexation Elasticsearch :**
+- Le texte OCR extrait est indexé dans Elasticsearch avec l'examId
+- Permet la recherche en plein texte dans tous les documents uploadés
+
+#### Entités
+```
+OcrResult : id, examId, rawText, extractedValues (JSON), confidence, processedAt, isImported
+```
+
+#### Endpoints
+- POST /ocr/extract → { examId } → lancer extraction OCR (BullMQ) (DOCTOR, SECRETARY)
+- GET /ocr/:examId/result → résultat extrait (DOCTOR)
+- POST /ocr/:examId/import → { selectedValues: Record<string, unknown> } → valider et importer dans exam.results (DOCTOR)
+- GET /search/documents?q=&patientId= → recherche plein texte dans les documents indexés (DOCTOR)
+
+#### Composants frontend
+- `components/medical/OcrExtractor.tsx`
+  - Affiché après upload d'un PDF dans ExamViewer
+  - Message : "Extraction automatique des valeurs détectée. Voulez-vous l'utiliser ?"
+  - Si oui → loader pendant l'OCR → afficher les valeurs extraites
+  - Chaque valeur : label | valeur extraite (éditable) | unité | score confiance (%)
+  - Bouton "Importer dans le dossier" (valide) ou "Ignorer"
+
+- Barre de recherche dans la page patients (recherche plein texte dans les documents)
+
+#### Rôles : DOCTOR (extraction, validation, import), SECRETARY (extraction uniquement)
+
+---
+
+## 📊 PHASE 5-BIS — DASHBOARD ADMIN + ANALYTICS AVANCÉS (Semaines 43–46) [PRIORITÉ 4]
+
+---
+
+### 5-BIS.1 — Dashboard Admin Global Complet (Sem 43–44)
+
+#### Logique métier
+
+**RÈGLE ABSOLUE : L'ADMIN NE VOIT JAMAIS LES DONNÉES MÉDICALES**
+- Pas accès au contenu des consultations
+- Pas accès aux ordonnances
+- Pas accès aux examens
+- Pas accès aux messages patient-médecin
+- Uniquement des chiffres agrégés et des données de gestion de compte
+
+**Métriques plateforme (données non-médicales) :**
+- Nombre total de médecins / actifs / certifiés / suspendus
+- Nombre total de patients enregistrés
+- Nombre de RDV : total / cette semaine / ce mois
+- Nombre de nouvelles inscriptions médecins/patients ce mois
+- Santé système : uptime, taille des queues BullMQ, taux d'erreur Sentry
+
+**Gestion médecins :**
+- Voir les informations de compte des médecins (pas leurs données médicales)
+- Certifier un médecin (isCertified = true) après vérification manuelle des documents
+- Suspendre un médecin (isSuspended = true) + message de raison
+- Voir des statistiques anonymes : nombre de consultations (pas le contenu), note moyenne
+
+**Journal d'audit :**
+- Chaque accès à un dossier patient est loggé avec : userId, doctorSpaceId, patientId (haché), action, timestamp, IP
+- L'admin voit les logs mais PAS le contenu des actions médicales (pas les données patient)
+- Filtres : médecin, date, type d'action
+
+**Sécurité :**
+- Tentatives de connexion échouées groupées par IP (détection brute force)
+- Sessions actives avec possibilité de révoquer (invalider refreshToken)
+
+#### Entités
+```
+AuditLog : id, userId, doctorSpaceId, action (ENUM: VIEW_PATIENT|CREATE_CONSULTATION|GENERATE_PRESCRIPTION|...), entityId (haché), ip, userAgent, createdAt
+
+FailedLoginAttempt : id, email, ip, createdAt
+
+ActiveSession : id, userId, refreshTokenId, ip, browser, createdAt
+```
+
+#### Endpoints admin (guard: ADMIN ou SUPER_ADMIN)
+- GET /admin/stats → métriques plateforme
+- GET /admin/doctors → liste avec filtres (specialty, city, isCertified, status)
+- GET /admin/doctors/:id/stats → statistiques anonymes d'un médecin
+- PATCH /admin/doctors/:id/certify → isCertified = true + email médecin
+- PATCH /admin/doctors/:id/suspend → { reason } → isSuspended = true + email médecin
+- PATCH /admin/doctors/:id/unsuspend → isSuspended = false
+- GET /admin/specialties → liste avec nombre médecins par spécialité
+- POST /admin/specialties → créer nouvelle spécialité
+- PATCH /admin/specialties/:id → modifier (champs dynamiques)
+- DELETE /admin/specialties/:id → supprimer si aucun médecin
+- GET /admin/audit-logs → { action?, userId?, dateFrom?, dateTo?, page } → logs
+- GET /admin/security/failed-logins → tentatives échouées groupées par IP
+- GET /admin/security/sessions → sessions actives
+- DELETE /admin/security/sessions/:sessionId → révoquer session
+
+#### Pages frontend admin
+
+- `app/[locale]/(dashboard)/admin/page.tsx` (Overview)
+  - Cards KPI : médecins actifs | consultations aujourd'hui (anonyme, juste le chiffre) | nouveaux patients | taux de présence aux RDV
+  - Recharts LineChart : inscriptions médecins + patients sur 6 mois
+  - Indicateur santé système : uptime en %, jobs en queue, taux d'erreur
+
+- `app/[locale]/(dashboard)/admin/doctors/page.tsx`
+  - DataTable avec colonnes : photo, nom, spécialité, ville, certifié (badge), statut, note, nb RDV
+  - Filtres : spécialité, ville, certifié (oui/non), statut (actif/suspendu)
+  - Actions par ligne : Certifier | Suspendre | Voir profil public | Voir stats anonymes
+  - Bulk actions : exporter la liste en CSV
+
+- `app/[locale]/(dashboard)/admin/specialties/page.tsx`
+  - Liste spécialités avec : icône, code, nom, nb médecins, nb champs configurés
+  - Bouton "Modifier les champs" → éditeur drag & drop des SpecialtyField[]
+  - Bouton "Ajouter spécialité" → formulaire
+  - Bouton "Supprimer" (si aucun médecin)
+
+- `app/[locale]/(dashboard)/admin/security/page.tsx`
+  - Journal d'audit : tableau filtrable (action, médecin, date, IP)
+  - Section "Tentatives suspectes" : IP + email + count + dernière tentative
+  - Section "Sessions actives" : utilisateur, IP, navigateur, date connexion + bouton révoquer
+
+- `app/[locale]/(dashboard)/admin/moderation/page.tsx`
+  - Liste avis patients PENDING : note, commentaire, médecin concerné, patient (anonymisé)
+  - Boutons Approuver / Rejeter + champ raison
+  - Filtres : médecin, date, note
+
+#### Rôles : ADMIN (tout sauf données médicales), SUPER_ADMIN (tout + créer admins)
+
+---
+
+### 5-BIS.2 — Analytics Avancés (Sem 45–46)
+
+#### Logique métier
+
+**Calcul côté SQL (performances) :**
+- Toutes les métriques sont calculées en SQL agrégé (GROUP BY, COUNT, SUM, AVG)
+- Jamais de chargement de toutes les données puis calcul en mémoire
+- Index DB sur : appointment.doctorId, appointment.startAt, receipt.doctorId, receipt.createdAt
+
+**Métriques DOCTOR :**
+
+Consultations :
+- Nombre total sur la période
+- byDay : tableau { date, count } pour le graphique
+- byType : { NEW: n, FOLLOWUP: n, EMERGENCY: n, TELECONSULT: n }
+- byStatus : { COMPLETED: n, CANCELLED: n, NO_SHOW: n }
+- avgDuration : durée moyenne en minutes
+
+Financier :
+- totalBilled : somme des montants de tous les reçus
+- totalPaid : somme des reçus PAID
+- totalUnpaid : somme des reçus PENDING
+- avgPerConsultation : totalBilled / consultationCount
+- byMonth : [{ month: 'YYYY-MM', billed, paid }] (12 derniers mois)
+
+Patients :
+- newPatients : patients avec premier RDV dans la période
+- returningPatients : patients avec RDV dans la période mais premier RDV avant la période
+- retentionRate : returningPatients / (newPatients + returningPatients) * 100
+- avgVisitsPerPatient
+- cancellationRate : cancelled / total * 100
+- noShowRate : noShow / confirmed * 100
+
+**Alertes automatiques :**
+- Calculées chaque lundi matin par BullMQ
+- Si cancellationRate augmente de > 15% vs semaine précédente → notification médecin
+- Si noShowRate > 20% → notification médecin avec suggestion (SMS de rappel plus rapproché)
+
+#### Endpoints
+- GET /analytics/consultations?period=WEEK|MONTH|3M|6M|YEAR|custom&from=&to= (DOCTOR)
+- GET /analytics/financial?period= (DOCTOR, SECRETARY)
+- GET /analytics/patients?period= (DOCTOR)
+- GET /analytics/specialty (DOCTOR) → pathologies fréquentes, médicaments prescrits
+- GET /analytics/export/pdf?period= → rapport PDF téléchargeable (BullMQ)
+- GET /analytics/export/excel?period= → données brutes Excel
+- GET /admin/analytics/platform?period= → métriques agrégées plateforme (ADMIN)
+
+#### Composants frontend
+
+- `app/[locale]/(dashboard)/doctor/[doctorId]/analytics/page.tsx`
+  - Date range picker (Cette semaine / Ce mois / 3 mois / 6 mois / 1 an / Personnalisé)
+  - Row 1 — KPI cards : Consultations | Nouveaux patients | CA total | Taux présence
+  - Row 2 — Recharts LineChart : consultations par jour
+  - Row 3 gauche — Recharts BarChart : CA par mois (payé en vert, en attente en orange)
+  - Row 3 droite — Recharts PieChart : nouveaux vs patients existants
+  - Row 4 — Recharts BarChart horizontal : 10 pathologies les plus fréquentes
+  - Row 5 — Tableau : médicaments les plus prescrits (nom, count)
+  - Boutons export : 📊 Excel | 📄 PDF
+  - Alertes : "⚠️ Taux d'annulation en hausse cette semaine"
+
+- Widget mini-analytics sur le dashboard médecin principal :
+  - 4 chiffres de la semaine : consultations, nouveaux patients, CA, taux présence
+  - Indicateur de tendance (↑ ↓) vs semaine précédente
+
+#### Rôles : DOCTOR (ses analytics), SECRETARY (analytics financiers de l'espace), ADMIN (plateforme anonymisée)
+
+---
+
+## 🔗 PHASE 6-BIS — API OUVERTE + WEBHOOKS (Semaines 47–48) [À FAIRE]
+
+---
+
+### 6-BIS.1 — Webhooks
+
+#### Logique métier
+
+**Utilité :**
+- Permettre aux médecins d'intégrer OphthoCare dans leurs propres systèmes
+- Ex : quand un RDV est confirmé → notifier leur CRM, leur logiciel de gestion de cabinet
+- Sécurité : chaque webhook est signé avec HMAC-SHA256 pour vérifier l'authenticité
+
+**Processus de livraison :**
+1. Événement se produit (ex: RDV confirmé)
+2. Chercher tous les webhooks actifs de ce DoctorSpace abonnés à cet event
+3. Pour chaque webhook → créer un BullMQ job
+4. Le job fait un POST HTTP vers l'URL du webhook avec le payload
+5. Header `X-OphthoCare-Signature: sha256={hmac}` pour vérification côté client
+6. Si réponse HTTP 2xx → succès, log DELIVERED
+7. Si erreur → retry 3 fois (délais : 1min, 5min, 30min)
+8. Si 3 échecs → log FAILED, alerte au médecin
+
+**Signature HMAC :**
+```
+payload = JSON.stringify(webhookBody)
+signature = crypto.createHmac('sha256', webhook.secret).update(payload).digest('hex')
+header = `X-OphthoCare-Signature: sha256=${signature}`
+```
+
+#### Entités
+```
+Webhook : id, doctorSpaceId, url, events (string[]), secret (UUID haché), isActive, createdAt
+
+WebhookDeliveryLog : id, webhookId, event, payload (JSON), status (PENDING|DELIVERED|FAILED),
+                     httpStatus?, responseTime?, attempt, error?, createdAt
+```
+
+**Events disponibles :**
+- appointment.created, appointment.confirmed, appointment.cancelled, appointment.completed, appointment.no_show
+- patient.created, patient.updated
+- consultation.completed
+- prescription.generated
+- receipt.generated, receipt.paid
+- referral.created, referral.accepted
+
+#### Endpoints
+- GET /webhooks (DOCTOR)
+- POST /webhooks → { url, events[], secret? } → si pas de secret, générer UUID (DOCTOR)
+- PATCH /webhooks/:id → { url?, events?, isActive? } (DOCTOR)
+- DELETE /webhooks/:id (DOCTOR)
+- GET /webhooks/:id/logs → historique livraisons avec pagination
+- POST /webhooks/:id/test → envoyer payload de test immédiatement (DOCTOR)
+
+#### Frontend
+- `app/[locale]/(dashboard)/doctor/[doctorId]/settings/webhooks/page.tsx`
+  - Liste webhooks avec URL, events abonnés, statut actif/inactif, dernière livraison
+  - Bouton "Créer webhook" → modal : URL + sélection events (checkboxes) + secret affiché une fois
+  - Par webhook : Modifier | Supprimer | Tester | Voir logs
+  - Page logs : tableau horodaté avec status, code HTTP, temps de réponse
+
+#### Rôles : DOCTOR (gérer ses webhooks)
+
+---
+
+### 6-BIS.2 — API Ouverte + Documentation
+
+#### Swagger / OpenAPI
+- Swagger UI disponible sur `/api/docs`
+- OpenAPI 3.0 complet avec schémas TypeScript exportés
+- Authentification : Bearer JWT + X-Api-Key
+- Exemples de requêtes/réponses pour chaque endpoint
+- Tags par module : auth, doctors, patients, appointments, consultations, documents, ai, admin
+
+#### Clé API (X-Api-Key)
+- DOCTOR peut générer une clé API dans ses paramètres
+- Stockée en DB (hachée), affichée une seule fois
+- Rate limit différent des appels JWT : 1000 req/h avec clé API
+- Headers réponse : X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
+
+```
+ApiKey : id, doctorSpaceId, keyHash, label, lastUsedAt, createdAt, isActive
+```
+
+- POST /api-keys → générer une clé (retourner la clé en clair une seule fois) (DOCTOR)
+- GET /api-keys → liste des clés actives (sans la valeur) (DOCTOR)
+- DELETE /api-keys/:id → révoquer (DOCTOR)
+
+#### Export comptabilité tiers
+- GET /accounting/export?format=CSV|JSON&period=YYYY-MM (DOCTOR, SECRETARY)
+- Format compatible Sage, EBP, Cegid
+- Structure : date, libellé, débit, crédit, solde, réf. document
+
+#### Rôles : DOCTOR (clés API, exports)
+
+---
+
+## ⚙️ PHASE 7 — AGENDA INTELLIGENT + FEATURES PREMIUM (Semaines 49–52) [À FAIRE]
+
+---
+
+### 7.1 — Agenda Intelligent (Sem 49–50)
+
+#### Logique métier
+
+**Suggestions de créneaux optimaux :**
+- Analyser l'historique des consultations du médecin (derniers 90 jours)
+- Identifier les heures de productivité maximale (peu d'annulations, durées respectées)
+- Tenir compte du type de patient : nouveau (durée plus longue) vs suivi (durée courte)
+- Éviter les créneaux juste avant/après une consultation d'urgence ou longue
+
+**Calcul durée intelligente :**
+- Analyser les consultations passées du patient avec ce médecin
+- Si patient chronique → durée moyenne + 15min
+- Si premier RDV → utiliser la durée standard du type + 10min (marge découverte)
+- Retourner la durée suggérée avec sa justification
+
+**Blocage automatique des pauses :**
+- Si le médecin a ≥ 4h de consultations continues prévues → proposer d'insérer une pause 30min
+- Déclenché quand le médecin affiche son agenda de demain
+- Notification toast : "Vous avez 6h sans pause prévues. Voulez-vous ajouter une pause déjeuner ?"
+
+#### Endpoints
+- POST /smart-calendar/suggest-slots → { doctorId, appointmentType, patientId?, preferredDate? } → top 5 créneaux
+- POST /smart-calendar/smart-duration → { patientId, doctorId, appointmentType } → { minutes, reason }
+- GET /smart-calendar/check-breaks → { doctorId, date } → { suggestBreak, slotSuggestion }
+
+#### Frontend
+- Dans le booking widget (admin) : après sélection médecin → "Créneaux recommandés" (top 5 avec justification)
+- Dans l'agenda médecin : notification toast si longue journée sans pause
+- Badge "IA" sur les créneaux suggérés
+
+#### Rôles : DOCTOR (reçoit suggestions), SECRETARY (utilise suggestions pour booking)
+
+---
+
+### 7.2 — Signature Électronique Avancée (Sem 51)
+
+#### Logique métier
+
+**Signature médecin sur les documents :**
+- Le médecin uploade une image PNG de sa signature (fond transparent, ≤200KB)
+- Stockée en S3 privé, jamais accessible directement depuis le frontend
+- À la génération de chaque PDF → intégrée en base64 dans le template HTML
+- Signature visuelle (image) + horodatage + hash du document pour traçabilité
+
+**Consentements patient :**
+- Types de consentements : RGPD (obligatoire à l'inscription), TELECONSULTATION_RECORDING (optionnel avant téléconsultation), SHARE_RECORDS (optionnel pour partager le dossier avec un confrère)
+- Signé via : case à cocher "J'accepte" + IP + user-agent enregistrés
+- Stocké en DB, non modifiable une fois signé
+
+**Horodatage certifié :**
+- À chaque signature → SHA-256 du contenu du document + timestamp Unix
+- Stocké dans signature_log
+- QR code encodant l'URL de vérification : /public/verify/{type}/{uuid}
+- Vérification publique : retourne { isValid, documentType, signerName, signedAt }
+
+#### Entités
+```
+ConsentRecord : id, patientId, type (ENUM), signedAt, ip, userAgent, documentVersion
+SignatureLog : id, documentType, documentId, signerId, documentHash, timestamp, verificationUuid
+```
+
+#### Endpoints
+- PATCH /doctors/me/signature → upload image PNG ≤200KB (DOCTOR)
+- POST /patients/:id/consent → { type } → enregistrer consentement (PATIENT)
+- GET /patients/me/consents → liste de mes consentements (PATIENT)
+- GET /public/verify/:docType/:uuid → vérification publique authenticité
+
+#### Frontend
+- `app/[locale]/(dashboard)/doctor/[doctorId]/settings/profile/page.tsx` (section signature)
+  - Zone d'upload signature : "Uploadez votre signature manuscrite (PNG fond transparent)"
+  - Preview de la signature une fois uploadée
+  - Message : "Cette signature sera apposée sur tous vos documents générés"
+
+- `app/[locale]/(dashboard)/patient/settings/page.tsx` (section consentements)
+  - Liste des consentements avec statut (signé / non signé)
+  - Bouton signer pour chaque consentement non signé
+
+- `app/[locale]/(public)/verify/[type]/[uuid]/page.tsx`
+  - Page publique (accessible via QR code)
+  - Affiche : ✅ Document authentique | Médecin : Dr [nom] | Signé le : [date]
+  - Ou : ❌ Document non trouvé ou modifié
+
+#### Rôles : DOCTOR (signature), PATIENT (consentements), PUBLIC (vérification)
+
+---
+
+### 7.3 — Comparateur Médecins (Sem 52)
+
+#### Logique métier
+- Maximum 3 médecins comparables simultanément
+- Sélection via checkboxes sur les DoctorCard dans les résultats de recherche
+- Bouton flottant "Comparer (N)" apparaît dès que ≥ 2 médecins sont sélectionnés
+- Le comparateur charge les données publiques des médecins (pas de données médicales)
+- La valeur "gagnante" dans chaque ligne est surlignée en vert
+
+#### Données comparées
+- Spécialité
+- Note globale (/5 avec étoiles)
+- Nombre d'avis
+- Tarif minimum de consultation
+- Prochain créneau disponible
+- Langues parlées
+- Site(s) et ville(s)
+- Certifié plateforme (✅ ou ❌)
+- Temps d'attente moyen (calculé depuis l'historique des RDV)
+- Badges (RESPONSIVE, PUNCTUAL, PEDAGOGIC)
+
+#### Composants frontend
+- `components/search/DoctorComparison.tsx`
+  - Reçoit : doctors: Doctor[] (2 ou 3)
+  - Affiche un tableau avec une colonne par médecin
+  - Chaque ligne = un critère avec la valeur pour chaque médecin
+  - Valeur "gagnante" en vert (note la plus haute, tarif le plus bas, prochaine dispo la plus proche)
+  - Bouton "Prendre RDV" sous chaque colonne → redirige vers /book?doctor=[id]
+  - Bouton "Fermer la comparaison"
+
+- Mise à jour de `DoctorSearchCard.tsx` :
+  - Checkbox de sélection pour comparaison
+  - Visuel sélectionné (bordure bleue)
+
+- Bouton flottant sticky en bas de page /search :
+  - "Comparer les médecins sélectionnés (N)" → ouvre DoctorComparison en modal full-width
+  - Apparaît uniquement si ≥ 2 sélectionnés
+
+#### Rôles : PUBLIC, PATIENT
+
+---
+
+## 🧪 PHASE 8 — TESTS & PRODUCTION COMPLÈTE (Semaines 53–58) [PRIORITÉ 5]
+
+---
+
+### 8.1 — Tests Complets (Sem 53–54)
+
+#### Tests unitaires backend (Jest) — objectif 80%+ coverage
+
+`auth.service.spec.ts` :
+- login valide → retourne accessToken + refreshToken
+- login email inexistant → 401
+- login mauvais password → 401
+- login compte suspendu → 403
+- 2FA : login sans code → demande le code, avec bon code → succès, avec mauvais code → 401
+- refresh token valide → nouveau accessToken
+- refresh token révoqué → 401
+- refresh token expiré → 401
+
+`appointments.service.spec.ts` :
+- getAvailableSlots : retourne les bons créneaux, exclut les occupés et bloqués
+- createAppointment : crée en DB + acquiert lock Redis + envoie notification BullMQ
+- createAppointment : 409 si créneau déjà pris (lock Redis)
+- cancelAppointment : vérifie que le patient ne peut annuler que ses propres RDV
+- confirmAppointment : seul DOCTOR/SECRETARY de l'espace peut confirmer
+
+`consultations.service.spec.ts` :
+- loadTemplate : retourne les bons champs pour la spécialité
+- closeConsultation : calcule correctement la durée, génère le reçu
+- compareConsultations : retourne le bon diff, refuse si différents patients
+- importPreConsultation : mappe correctement les réponses aux champs
+
+`ai.service.spec.ts` :
+- summarize : utilise le cache Redis, invalide le cache si nouvelles données
+- chat : inclut le disclaimer dans la réponse, respecte le rate limit
+- quiz : accessible uniquement par TRAINEE
+- Toutes les méthodes IA : log dans AiAuditLog
+
+`multi-tenant.spec.ts` :
+- Un DOCTOR du DoctorSpace A ne peut pas lire les données du DoctorSpace B
+- Une SECRETARY du DoctorSpace A ne peut pas créer de RDV dans le DoctorSpace B
+- Un TRAINEE ne peut accéder qu'aux patients de son DoctorSpace
+
+#### Tests intégration backend (Jest + SuperTest) — objectif 50%+ coverage
+
+Flux complet 1 : Inscription → Recherche → Booking → Consultation → Ordonnance → Reçu
+- Créer patient
+- Créer médecin + site + horaires
+- Rechercher le médecin
+- Créer RDV → confirmer → ouvrir consultation → remplir → fermer → générer ordonnance → créer reçu
+- Vérifier que chaque étape a les bons statuts
+
+Flux complet 2 : Sécurité endpoints
+- Pour chaque endpoint sensible : tester sans token (401), token expiré (401), mauvais rôle (403)
+
+Flux complet 3 : Génération PDF
+- Générer une ordonnance → vérifier que pdfUrl est non null → GET /public/verify/prescription/{uuid} → isValid = true
+
+#### Tests frontend (Vitest + Testing Library)
+
+`BookingWidget.spec.tsx` :
+- Navigation 6 étapes (next/back)
+- Validation : impossible de passer à l'étape suivante si champ requis vide
+- Simulation erreur API → affichage message d'erreur
+- Booking réussi → affichage confirmation
+
+`SpecialtyFormRenderer.spec.tsx` :
+- Rendu dynamique des champs selon les types (number, select, boolean, date)
+- Validation Zod générée correctement
+- Calcul automatique IMC quand poids/taille changent
+
+`AiChatbot.spec.tsx` :
+- Disclaimer visible en permanence
+- Streaming SSE : affichage progressif
+- Raccourcis rapides → remplissent l'input
+
+`AuthStore.spec.ts` (Zustand) :
+- login → stocke user + token
+- logout → vide le store + invalide le cookie
+- refresh → renouvelle le token automatiquement
+
+#### Tests E2E Playwright
+
+Scénario 1 : Patient standard
+1. S'inscrire en tant que patient
+2. Rechercher "Cardiologue" à "Casablanca"
+3. Sélectionner un médecin
+4. Prendre RDV pour le lendemain à 10h
+5. Vérifier email de confirmation (mock SMTP)
+6. Remplir le questionnaire pré-consultation via le lien
+
+Scénario 2 : Médecin workflow consultation
+1. Se connecter en tant que médecin
+2. Aller sur le calendrier → voir le RDV du patient
+3. Confirmer le RDV
+4. Ouvrir la consultation → remplir les champs ophtalmologie
+5. Générer une ordonnance
+6. Fermer la consultation
+7. Vérifier que le reçu a été généré
+
+Scénario 3 : Stagiaire apprentissage
+1. Se connecter en tant que stagiaire
+2. Aller sur /ai-learning
+3. Sélectionner un dossier patient
+4. Lancer un quiz (difficile)
+5. Répondre à 5 questions
+6. Vérifier le score final
+
+Scénario 4 : Secrétaire accueil
+1. Se connecter en tant que secrétaire
+2. Voir les RDV du jour
+3. Check-in d'un patient (arrivé)
+4. Créer un reçu pour la consultation
+5. Marquer le reçu comme payé (CASH)
+
+#### Tests de charge (k6) — objectifs
+
+```javascript
+// Scénario 1 : Recherche médecins
+export const options = {
+  stages: [
+    { duration: '2m', target: 500 },
+    { duration: '5m', target: 1000 },
+    { duration: '2m', target: 0 },
+  ],
+  thresholds: {
+    http_req_duration: ['p95<2000'], // < 2s au p95
+    http_req_failed: ['rate<0.01'],  // < 1% d'erreurs
+  },
+}
+// GET /doctors/search?q=cardiologue&city=casablanca
+
+// Scénario 2 : Bookings simultanés (anti-double-booking)
+// 100 utilisateurs tentent de réserver le même créneau
+// Résultat attendu : 1 booking réussi, 99 retournent 409
+```
+
+---
+
+### 8.2 — Audit Sécurité (Sem 55)
+
+#### Checklist RGPD
+
+- [ ] Consentement explicite RGPD à l'inscription (case à cocher obligatoire)
+- [ ] Page "Mes données" : bouton "Télécharger toutes mes données" (JSON, Article 20 RGPD)
+  - Inclut : profil, RDV, consultations, messages, documents
+  - Exclut : données d'autres patients
+- [ ] Suppression de compte :
+  - Données personnelles (nom, email, téléphone) → anonymisées (DELETED_USER_{id})
+  - Données médicales → conservées 10 ans (obligation légale médicale marocaine)
+  - Option : export avant suppression
+- [ ] Durée de conservation configurable :
+  - Données médicales : 10 ans (légal)
+  - Données personnelles de compte : 3 ans après dernière activité
+  - Logs d'audit : 5 ans
+- [ ] Registre des traitements documenté (ARCHITECTURE.md section RGPD)
+- [ ] DPO (Délégué à la Protection des Données) mentionné dans les CGU
+
+#### Checklist sécurité technique
+
+- [ ] class-validator sur 100% des DTOs backend
+- [ ] Prisma paramétré sur toutes les requêtes (0 SQL brut sans paramètre)
+- [ ] CORS : whitelist explicite (ophthocare.com + dev.ophthocare.com)
+- [ ] Helmet.js configuré : CSP stricte, HSTS 1 an, X-Frame-Options DENY, X-Content-Type-Options nosniff
+- [ ] Rate limiting : auth 5/min, IA 20/min, API 100/min, API-Key 1000/h
+- [ ] Chiffrement AES-256 : nationalId, insuranceNumber (colonnes en DB)
+- [ ] JWT_SECRET et JWT_REFRESH_SECRET : minimum 32 caractères aléatoires, différents
+- [ ] refreshToken stocké en cookie httpOnly, Secure, SameSite=Strict
+- [ ] Audit log sur chaque accès dossier patient (voir AuditLog entity)
+- [ ] npm audit : 0 vulnérabilité critique
+- [ ] Scan Snyk (ou similaire) des dépendances
+
+#### Tests de pénétration (pen test manuel)
+
+1. **IDOR (Insecure Direct Object Reference)** :
+   - Tester GET /patients/:id avec un patientId appartenant à un autre médecin → doit retourner 403
+   - Tester GET /consultations/:id d'un autre DoctorSpace → 403
+   - Tester PATCH /appointments/:id d'un autre patient → 403
+
+2. **Injection XSS** :
+   - Soumettre `<script>alert('xss')</script>` dans tous les champs texte libres
+   - Vérifier que le rendu frontend n'exécute pas le script
+
+3. **JWT manipulation** :
+   - Modifier le payload du JWT (changer le rôle de PATIENT à ADMIN) → doit retourner 401
+   - Utiliser un JWT signé avec un secret différent → 401
+
+4. **Upload malveillant** :
+   - Uploader un fichier .php renommé en .jpg → vérifier que le type MIME est validé côté serveur
+   - Uploader un fichier > limite configurée → 413
+
+5. **Rate limit bypass** :
+   - Tenter 100 logins en boucle → doit être bloqué après 5 tentatives
+
+---
+
+### 8.3 — Infrastructure Production (Sem 56–58)
+
+#### docker-compose.prod.yml
+```yaml
+version: '3.8'
+services:
+  nginx:
+    image: nginx:alpine
+    ports: ["80:80", "443:443"]
+    volumes: [./nginx.conf:/etc/nginx/nginx.conf, ./ssl:/etc/ssl]
+    depends_on: [frontend, backend]
+
+  frontend:
+    build: { context: ./frontend, dockerfile: Dockerfile.prod }
+    env_file: .env.production
+
+  backend:
+    build: { context: ./backend, dockerfile: Dockerfile.prod }
+    env_file: .env.production
+    depends_on: [postgresql, redis, elasticsearch]
+
+  postgresql:
+    image: postgres:16-alpine
+    environment: { POSTGRES_DB: ophthocare, POSTGRES_USER: app, POSTGRES_PASSWORD: ${DB_PASSWORD} }
+    volumes: [postgres_data:/var/lib/postgresql/data]
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    volumes: [redis_data:/data]
+
+  elasticsearch:
+    image: elasticsearch:8.11.0
+    environment: { discovery.type: single-node, xpack.security.enabled: false }
+    volumes: [es_data:/usr/share/elasticsearch/data]
+
+  orthanc:
+    image: orthancteam/orthanc:23.12.0
+    volumes: [orthanc_data:/var/lib/orthanc/db]
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment: { MINIO_ROOT_USER: ${S3_ACCESS_KEY}, MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY} }
+    volumes: [minio_data:/data]
+
+volumes:
+  postgres_data:
+  redis_data:
+  es_data:
+  orthanc_data:
+  minio_data:
+```
+
+#### CI/CD GitHub Actions `.github/workflows/deploy.yml`
+```yaml
+name: Deploy OphthoCare
+on:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tests backend
+        run: cd backend && npm ci && npm run test:cov
+      - name: Tests frontend
+        run: cd frontend && npm ci && npm run test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build et push images Docker
+        run: |
+          docker build -t ophthocare/backend:latest ./backend
+          docker build -t ophthocare/frontend:latest ./frontend
+          docker push ophthocare/backend:latest
+          docker push ophthocare/frontend:latest
+
+      - name: Deploy sur VPS
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /opt/ophthocare
+            docker-compose -f docker-compose.prod.yml pull
+            docker-compose -f docker-compose.prod.yml up -d --no-deps backend frontend
+            docker exec ophthocare_backend npx prisma migrate deploy
+            curl -f http://localhost:3001/health || exit 1
+```
+
+#### Variables `.env.production` (toutes requises)
+```
+# Base de données
+DATABASE_URL=postgresql://app:${DB_PASSWORD}@postgresql:5432/ophthocare
+REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+ELASTICSEARCH_URL=http://elasticsearch:9200
+
+# Auth (générer avec: openssl rand -base64 32)
+JWT_SECRET=[32+ chars aléatoires]
+JWT_REFRESH_SECRET=[32+ chars différents]
+JWT_EXPIRES_IN=15m
+JWT_REFRESH_EXPIRES_IN=7d
+
+# IA
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o
+
+# SMS
+TWILIO_ACCOUNT_SID=AC...
+TWILIO_AUTH_TOKEN=...
+TWILIO_PHONE_NUMBER=+212...
+
+# Email
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=noreply@ophthocare.com
+SMTP_PASS=...
+
+# Push notifications
+FIREBASE_SERVICE_ACCOUNT={...json...}
+
+# Téléconsultation
+DAILY_CO_API_KEY=...
+
+# Stockage fichiers
+S3_ENDPOINT=http://minio:9000
+S3_ACCESS_KEY=...
+S3_SECRET_KEY=...
+S3_BUCKET_NAME=ophthocare
+S3_BUCKET_PRIVATE=ophthocare-private
+
+# DICOM
+ORTHANC_URL=http://orthanc:8042
+ORTHANC_USERNAME=orthanc
+ORTHANC_PASSWORD=orthanc
+
+# Chiffrement données sensibles
+AES_SECRET_KEY=[32 chars pour AES-256]
+
+# URLs publiques
+NEXT_PUBLIC_API_URL=https://api.ophthocare.com
+NEXT_PUBLIC_APP_URL=https://ophthocare.com
+NEXT_PUBLIC_WS_URL=wss://api.ophthocare.com
+
+# Monitoring
+SENTRY_DSN=https://...@sentry.io/...
+SENTRY_ENVIRONMENT=production
+```
+
+#### Monitoring et backup
+
+Monitoring :
+- Sentry : erreurs frontend + backend avec alertes email
+- Uptime Robot : ping toutes les 5 minutes, SMS si down
+- BullMQ dashboard (bull-board) sur /admin/queues (accès SUPER_ADMIN uniquement)
+
+Backup PostgreSQL (cron.d) :
+```bash
+# Backup quotidien à 2h du matin
+0 2 * * * /scripts/backup-pg.sh
+```
+```bash
+#!/bin/bash
+DATE=$(date +%Y%m%d_%H%M%S)
+pg_dump $DATABASE_URL | gzip > /tmp/backup_$DATE.sql.gz
+aws s3 cp /tmp/backup_$DATE.sql.gz s3://ophthocare-backups/postgresql/
+rm /tmp/backup_$DATE.sql.gz
+# Garder seulement les 30 derniers jours
+aws s3 ls s3://ophthocare-backups/postgresql/ | sort -r | tail -n +31 | awk '{print $4}' | xargs -I {} aws s3 rm s3://ophthocare-backups/postgresql/{}
+```
+
+---
+
+# PARTIE 4 — RÉCAPITULATIF ORDRE D'EXÉCUTION POUR CURSOR
+
+## Ordre exact des 58 points à implémenter
+
+### PRIORITÉ 1 — Phase 2-BIS (immédiatement)
+
+1. `backend/src/modules/specialty/specialty.entity.ts` + SpecialtyField type
+2. `backend/src/modules/specialty/specialty.service.ts` (CRUD + loadTemplate)
+3. `backend/src/modules/specialty/specialty.controller.ts` (routes + guards)
+4. `backend/src/database/seeds/specialties.seed.ts` (18+ spécialités avec champs JSON complets)
+5. Mise à jour `consultation.entity.ts` + `consultation.service.ts` (close, compare, chronometer)
+6. `frontend/components/medical/SpecialtyFormRenderer.tsx` (rendu dynamique + Zod)
+7. `frontend/components/medical/VitalSignsTimeline.tsx` (Recharts)
+8. `frontend/components/medical/GrowthCurveChart.tsx` (WHO courbes)
+9. `frontend/components/medical/ConsultationComparison.tsx` (split view diff)
+10. `backend/src/modules/documents/pdf-builder.service.ts` (Puppeteer : prescription + reçu + report + référence)
+11. `backend/src/modules/documents/signature-upload.service.ts` (S3 privé)
+12. `backend/src/modules/documents/qr-code.service.ts` + GET /public/verify/:type/:uuid
+13. `backend/src/modules/documents/documents.controller.ts` (tous les endpoints documents)
+14. `frontend/components/documents/PrescriptionForm.tsx` (auto-complétion médicaments + preview)
+15. `frontend/components/documents/ReportEditor.tsx` (éditeur riche + suggestion IA)
+16. `frontend/components/documents/DocumentsList.tsx` (onglets + filtres + export ZIP)
+17. `backend/src/modules/messaging/messaging.gateway.ts` (WebSocket Socket.io, rooms, JWT auth)
+18. `backend/src/modules/messaging/messaging.service.ts` (conversations + broadcast)
+19. `frontend/components/common/MessagingPanel.tsx` + `hooks/useMessaging.ts`
+20. Badge unread global dans la navbar
+
+### PRIORITÉ 2 — Phase 3 + Phase 3-BIS
+
+21. App Mobile Flutter Patient (login, recherche, booking, RDV, questionnaire)
+22. App Mobile Flutter Médecin (dashboard, agenda, dossiers)
+23. `backend/src/modules/notifications/` (email SMTP + SMS Twilio + push FCM + BullMQ)
+24. Templates email Handlebars (FR + AR + EN pour tous les types)
+25. Téléconsultation Daily.co (room création + URLs + consentement)
+26. `backend/src/modules/family-members/` (entity + routes + garde PATIENT)
+27. Mise à jour BookingWidget.tsx (step 0 "Pour qui ?")
+28. `backend/src/modules/reviews/` (review.entity + modération + badges auto BullMQ cron)
+29. `frontend/components/reviews/ReviewForm.tsx` + `ReviewsList.tsx`
+30. `app/[locale]/(dashboard)/admin/moderation/page.tsx`
+31. `backend/src/modules/pre-consultation/` (entity + templates seeds + token + urgence)
+32. `app/[locale]/(public)/pre-consultation/[token]/page.tsx` (PUBLIC sans auth)
+33. `backend/src/modules/chronic-care/` (entity + milestones + BullMQ cron rappels)
+34. `frontend/components/medical/ChronicCarePlanCard.tsx` + page chronic-care
+35. `backend/src/modules/referrals/` (entity + PDF courrier + email + SMS lien)
+36. `frontend` page referrals (envoyées/reçues) + modal référence 5 étapes
+37. next-intl configuration (fr/ar/en) + `messages/fr.json` + `messages/ar.json` + `messages/en.json`
+38. RTL complet : layout.tsx dir, Tailwind ps/pe, sidebar flip, Recharts rtl
+39. `frontend/components/common/LanguageSwitcher.tsx`
+40. `backend` : preferredCurrency sur Doctor + receipts.service exports Excel (ExcelJS) + PDF
+41. `frontend` page billing (tableau reçus + totaux + exports)
+42. `backend/src/modules/waitlist/` (entity + BullMQ job annulation → notification chaîne)
+43. Mise à jour BookingWidget (section "rejoindre liste d'attente" si aucun créneau)
+
+### PRIORITÉ 3 — Phase 4-BIS
+
+44. `backend/src/modules/ai/ai.service.ts` (summarize + diagnoses + draftReport + analyzeExams + cache Redis)
+45. `backend/src/modules/ai/ai.service.ts` suite (chatbot SSE streaming + quiz TRAINEE + explainExam)
+46. AuditLog IA + rate limiting 20/min + TraineeProgress entity
+47. `frontend/components/ai/AiChatbot.tsx` (SSE streaming typewriter + disclaimer + raccourcis)
+48. `frontend/components/ai/AiSummary.tsx` + `AiDiagnosisSuggestions.tsx`
+49. `frontend/components/ai/AiQuiz.tsx` (TRAINEE only) + page ai-learning
+50. `frontend/app/[locale]/(dashboard)/doctor/[doctorId]/ai-assistant/page.tsx` (layout 3 colonnes)
+51. `backend/src/modules/exams/dicom.service.ts` (Orthanc REST integration)
+52. `backend/src/modules/exams/exams.service.ts` (upload S3 + DICOM routing + annotations)
+53. `frontend/components/medical/ExamViewer.tsx` (zoom + pan + outils annotation + canvas)
+54. `frontend/components/medical/DicomViewer.tsx` (Cornerstone.js + WADO + fenêtrage)
+55. `frontend/components/medical/ExamComparison.tsx` (split synchronisé)
+56. `backend/src/modules/ocr/ocr.service.ts` (Tesseract.js + extractBiologyResults parser)
+57. `frontend/components/medical/OcrExtractor.tsx` + recherche plein texte
+
+### PRIORITÉ 4 — Phase 5-BIS + 6-BIS + 7
+
+58. `backend/src/modules/admin/admin.service.ts` (getPlatformStats + gestion médecins + audit)
+59. `frontend/app/[locale]/(dashboard)/admin/` (overview + doctors + specialties + security + moderation)
+60. `backend/src/modules/analytics/analytics.service.ts` (métriques SQL agrégées DOCTOR + ADMIN)
+61. `frontend/app/[locale]/(dashboard)/doctor/[doctorId]/analytics/page.tsx` (Recharts + exports)
+62. `backend/src/modules/webhooks/` (entity + BullMQ delivery + HMAC + retry + logs)
+63. `frontend/app/[locale]/(dashboard)/doctor/[doctorId]/settings/webhooks/page.tsx`
+64. Swagger UI /api/docs + ApiKey entity + endpoints X-Api-Key
+65. `backend/src/modules/smart-calendar/smart-calendar.service.ts` (suggestions + durée auto)
+66. `backend/src/modules/signatures/signature.service.ts` (SHA-256 + QR code + consentements)
+67. `app/[locale]/(public)/verify/[type]/[uuid]/page.tsx` (vérification publique)
+68. `frontend/components/search/DoctorComparison.tsx` + mise à jour DoctorSearchCard
+
+### PRIORITÉ 5 — Phase 8
+
+69. Tests Jest backend : auth.service + appointments.service + consultations.service + ai.service
+70. Tests Jest multi-tenant isolation (tous les endpoints critiques)
+71. Tests Vitest frontend : BookingWidget + SpecialtyFormRenderer + AiChatbot + AuthStore
+72. Tests E2E Playwright : 4 scénarios complets
+73. Tests de charge k6 : recherche 1000 users + bookings simultanés anti-double-booking
+74. Audit RGPD complet + page "Mes données" + suppression compte
+75. Checklist sécurité + pen test IDOR + XSS + JWT + upload malveillant
+76. `docker-compose.prod.yml` complet (8 services)
+77. `.github/workflows/deploy.yml` CI/CD (test → build → push → deploy → health check)
+78. Sentry configuration frontend + backend
+79. Backup PostgreSQL cron → S3 + Uptime Robot monitoring
+
+---
+
+## TABLEAU DE BORD FINAL — TOUTES LES PHASES
+
+| # | Phase | Description | Semaines | Priorité | Statut |
+|---|---|---|---|---|---|
+| 1 | Phase 1 | Architecture & Setup | 1–6 | — | ✅ Terminé |
+| 2 | Phase 2.1 | Auth & RBAC complet | 7–8 | — | ✅ Terminé |
+| 3 | Phase 2.2 | Module Médecins | 9–10 | — | ✅ Terminé |
+| 4 | Phase 2.3 | Annuaire & Recherche | 11–12 | — | ✅ Terminé |
+| 5 | Phase 2.4 | Module Patients | 13–14 | — | ✅ Terminé |
+| 6 | Phase 2.5 | Rendez-vous & Agenda | 15–18 | — | ✅ Terminé |
+| 7 | Phase 2.6 | Dossier Patient base | 19–20 | — | ✅ Partiel |
+| 8 | **Phase 2-BIS.1** | **Dossier Multi-Spécialités complet** | **19–20** | **🔴 CRITIQUE** | **❌ À faire** |
+| 9 | **Phase 2-BIS.2** | **Génération PDF complète** | **21–22** | **🔴 CRITIQUE** | **❌ À faire** |
+| 10 | **Phase 2-BIS.3** | **Messagerie Interne** | **23–24** | **🔴 CRITIQUE** | **❌ À faire** |
+| 11 | Phase 3.1 | App Mobile Patient Flutter | 21–23 | 🟡 HAUTE | ❌ À faire |
+| 12 | Phase 3.2 | App Mobile Médecin Flutter | 24–25 | 🟡 HAUTE | ❌ À faire |
+| 13 | Phase 3.3 | Notifications Multicanal | 26–27 | 🟡 HAUTE | ❌ À faire |
+| 14 | Phase 3.4 | Téléconsultation Daily.co | 28–30 | 🟡 HAUTE | ❌ À faire |
+| 15 | **Phase 3-BIS.1** | **Membres de la Famille** | **25** | **🔴 CRITIQUE** | **❌ À faire** |
+| 16 | **Phase 3-BIS.2** | **Avis + Badges Médecins** | **26** | **🟡 HAUTE** | **❌ À faire** |
+| 17 | **Phase 3-BIS.3** | **Questionnaire Pré-Consultation** | **27** | **🟡 HAUTE** | **❌ À faire** |
+| 18 | **Phase 3-BIS.4** | **Suivi Chronique Complet** | **28** | **🟡 HAUTE** | **❌ À faire** |
+| 19 | **Phase 3-BIS.5** | **Parcours de Soins + Référence** | **29** | **🟡 HAUTE** | **❌ À faire** |
+| 20 | **Phase 3-BIS.6** | **Multi-Langue FR/AR/EN + RTL** | **30** | **🔴 CRITIQUE** | **❌ À faire** |
+| 21 | **Phase 3-BIS.7** | **Devises + Export Comptabilité** | **31** | **🟡 HAUTE** | **❌ À faire** |
+| 22 | **Phase 3-BIS.8** | **Liste d'Attente Automatique** | **32** | **🟢 NORMALE** | **❌ À faire** |
+| 23 | **Phase 4-BIS.1** | **IA Complète (chatbot SSE, quiz, résumé)** | **33–37** | **🟡 HAUTE** | **❌ À faire** |
+| 24 | **Phase 4-BIS.2** | **DICOM + Annotations + Comparaison** | **38–40** | **🟡 HAUTE** | **❌ À faire** |
+| 25 | **Phase 4-BIS.3** | **OCR Extraction Automatique** | **41–42** | **🟢 NORMALE** | **❌ À faire** |
+| 26 | **Phase 5-BIS.1** | **Dashboard Admin Complet** | **43–44** | **🔴 CRITIQUE** | **❌ À faire** |
+| 27 | **Phase 5-BIS.2** | **Analytics Avancés** | **45–46** | **🟡 HAUTE** | **❌ À faire** |
+| 28 | **Phase 6-BIS.1** | **Webhooks + Livraison HMAC** | **47–48** | **🟢 NORMALE** | **❌ À faire** |
+| 29 | **Phase 6-BIS.2** | **API Ouverte + Swagger + ApiKey** | **47–48** | **🟢 NORMALE** | **❌ À faire** |
+| 30 | **Phase 7.1** | **Agenda Intelligent** | **49–50** | **🟢 NORMALE** | **❌ À faire** |
+| 31 | **Phase 7.2** | **Signature Électronique + Consentements** | **51** | **🟢 NORMALE** | **❌ À faire** |
+| 32 | **Phase 7.3** | **Comparateur Médecins** | **52** | **🟢 NORMALE** | **❌ À faire** |
+| 33 | **Phase 8.1** | **Tests Jest + Playwright + k6** | **53–54** | **🔴 CRITIQUE** | **❌ À faire** |
+| 34 | **Phase 8.2** | **Audit Sécurité + RGPD + Pen test** | **55** | **🔴 CRITIQUE** | **❌ À faire** |
+| 35 | **Phase 8.3** | **Infrastructure Production + CI/CD** | **56–58** | **🔴 CRITIQUE** | **❌ À faire** |

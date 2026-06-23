@@ -15,7 +15,8 @@ export const useDoctors = () => {
 
     try {
       const response = await doctorsApi.getAll(skip, take);
-      setDoctors(response.data || []);
+      const list = Array.isArray(response) ? response : (response as { data?: Doctor[] })?.data;
+      setDoctors(list ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch doctors');
     } finally {

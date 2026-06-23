@@ -1,5 +1,7 @@
 # OphthoCare - Complete Project Overview
 
+**État technique actuel du dépôt** : voir [`avancement.md`](./avancement.md) (modules, API, données, suites possibles).
+
 **Project**: OphthoCare - Universal Medical Platform  
 **Status**: 🟡 Phase 1 Active Development  
 **Current Date**: May 13, 2026  
@@ -17,7 +19,7 @@ OphthoCare is a comprehensive medical management platform designed for ophthalmo
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                  OPHTHOCA RE PLATFORM                       │
+│                  OPHTHOCARE PLATFORM                        │
 ├──────────────────────┬──────────────────────────────────────┤
 │                      │                                      │
 │  Frontend (Next.js)  │     Backend (NestJS)                 │
@@ -43,29 +45,28 @@ OphthoCare is a comprehensive medical management platform designed for ophthalmo
 
 ```
 OphthoCare/
-├── backend/                   # NestJS Backend API
+├── frontend/                  # Next.js 16 (App Router) — app web unique
 │   ├── src/
-│   │   ├── main.ts           # Entry point
-│   │   ├── config/           # Database config
-│   │   ├── database/         # Migrations, seeds
-│   │   └── modules/          # Feature modules
-│   ├── docker-compose.yml    # PostgreSQL, Redis
+│   │   ├── app/               # Routes (public), dashboard/, api/
+│   │   ├── components/        # UI, layout, providers
+│   │   ├── hooks/             # React hooks
+│   │   ├── lib/               # API client, auth, utils
+│   │   ├── store/             # Zustand
+│   │   └── types/             # TypeScript
+│   ├── public/
 │   └── package.json
-│
-├── frontend/                  # Next.js Frontend
+├── Backend/                   # NestJS API (Prisma)
+│   ├── prisma/
 │   ├── src/
-│   │   ├── app/              # Pages and layouts
-│   │   ├── components/       # React components
-│   │   ├── hooks/            # Custom hooks
-│   │   ├── lib/              # Utilities and config
-│   │   ├── store/            # Zustand stores
-│   │   └── types/            # TypeScript definitions
-│   ├── public/               # Static assets
+│   │   ├── main.ts
+│   │   ├── prisma/            # PrismaService
+│   │   ├── database/seeds/
+│   │   └── modules/
+│   ├── docker-compose.yml
 │   └── package.json
-│
-├── AGENTS.md                 # AI agent configuration
-├── CLAUDE.md                 # Claude preferences
-└── README.md                 # This file
+├── AGENTS.md
+├── CLAUDE.md
+└── README.md
 ```
 
 ## 🚀 Current Phase: Phase 1 - MVP (Weeks 1-12)
@@ -73,7 +74,7 @@ OphthoCare/
 ### ✅ Week 1: Infrastructure (COMPLETED - May 6-12)
 
 **Backend**:
-- ✅ NestJS project setup with TypeORM
+- ✅ NestJS project setup with Prisma
 - ✅ PostgreSQL database configuration
 - ✅ Redis cache setup
 - ✅ Entity models (User, Doctor, Patient, Specialty)
@@ -82,12 +83,12 @@ OphthoCare/
 - ✅ Swagger API documentation
 
 **Frontend**:
-- ✅ Next.js 14 project setup
+- ✅ Next.js 16 project setup (dossier `frontend/`)
 - ✅ TypeScript configuration (5.3.3)
 - ✅ Project directory structure (27 directories)
 - ✅ TypeScript type definitions (30+ interfaces)
 - ✅ Axios API client with interceptors
-- ✅ NextAuth.js v5 authentication
+- ✅ NextAuth.js v4 authentication
 - ✅ Zustand state management (3 stores)
 - ✅ Custom hooks (4 hooks)
 - ✅ Component foundation (6+ components)
@@ -131,7 +132,7 @@ OphthoCare/
 - **Framework**: NestJS 10.3.0
 - **Language**: TypeScript 5.3.3
 - **Database**: PostgreSQL 15
-- **ORM**: TypeORM 0.3.17
+- **ORM**: Prisma
 - **Cache**: Redis 7
 - **Auth**: Passport.js + JWT
 - **Validation**: Class-validator
@@ -139,10 +140,10 @@ OphthoCare/
 - **Security**: bcrypt password hashing
 
 ### Frontend
-- **Framework**: Next.js 14 (App Router)
+- **Framework**: Next.js 16 (App Router)
 - **Language**: TypeScript 5.3.3
 - **UI**: React 18/19
-- **Auth**: NextAuth.js v5
+- **Auth**: NextAuth.js v4
 - **State**: Zustand 4.x
 - **HTTP**: Axios with interceptors
 - **Styling**: Tailwind CSS 3.3
@@ -178,46 +179,40 @@ OphthoCare/
 ### Quick Start
 
 ```bash
-# Backend
-cd backend
+# Racine du dépôt (installe frontend + Backend)
 npm install
-docker-compose up -d          # Start PostgreSQL, Redis
-npm run start:dev             # Start NestJS server
 
-# Frontend (in another terminal)
-cd frontend
-npm install
-cp .env.example .env.local    # Configure env
-npm run dev                   # Start Next.js
+# Terminal 1 — API
+npm run dev:api
 
-# Access
-# Frontend: http://localhost:3000
-# Backend API: http://localhost:3001
-# API Docs: http://localhost:3001/api
-# Database: http://localhost:8080 (Adminer)
-# Redis: http://localhost:8081 (Redis Commander)
+# Terminal 2 — Next.js
+npm run dev
 ```
+
+Sinon, par dossier :
+
+```bash
+cd Backend && npm install && docker compose up -d && npm run start:dev
+cd frontend && npm install && cp .env.example .env.local && npm run dev
+```
+
+- Frontend : http://localhost:3000  
+- API : http://localhost:3001 · Swagger : http://localhost:3001/api  
+- Adminer : http://localhost:8080 · Redis Commander : http://localhost:8081
 
 ### Common Commands
 
 ```bash
-# Backend
-npm run start:dev             # Development with hot reload
-npm run build                 # Build for production
-npm run lint                  # ESLint check
-npm run test                  # Run tests
+# Racine (workspaces)
+npm run dev:api
+npm run dev
 
-# Frontend
-npm run dev                   # Development server
-npm run build                 # Production build
-npm start                     # Production server
-npm run type-check            # TypeScript check
-npm run lint                  # ESLint check
-npm run format                # Prettier format
+# Ou par workspace
+npm run build -w ophthoccare-frontend
+npm run build -w ophthoccare-backend
 
-# Database
-npm run typeorm:migration:generate src/database/migrations/001-initial
-npm run typeorm:migration:run
+# Base de données (Prisma, depuis la racine)
+npm run prisma:migrate
 npm run seed
 ```
 
@@ -227,7 +222,7 @@ npm run seed
 |------|---------|
 | **README.md** | This overview (root) |
 | **frontend/README.md** | Frontend setup and features |
-| **backend/README.md** | Backend setup and architecture |
+| **Backend/README.md** | Backend setup and architecture |
 | **frontend/STRUCTURE.md** | Complete file organization |
 | **frontend/DEVELOPMENT.md** | Development status report |
 | **frontend/CHECKLIST.md** | Implementation tasks |
@@ -457,8 +452,8 @@ NEXT_PUBLIC_ENABLE_AI_FEATURES=false
 
 ❌ "Migration fails"
 ✅ Ensure database exists
-✅ Check entity files are correct
-✅ Run: npm run typeorm:migration:run
+✅ Check prisma/schema.prisma and DATABASE_URL
+✅ Run: cd Backend && npm run prisma:migrate
 ```
 
 ## 📞 Getting Help

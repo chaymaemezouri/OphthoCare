@@ -2,6 +2,33 @@
 
 NestJS backend for OphthoCare universal medical platform.
 
+## API (extrait)
+
+- `POST /auth/login`, `POST /auth/register`, `POST /auth/refresh`
+- `GET /users/me`, `PATCH /users/me` (JWT)
+- `GET /patients/me`, `PUT /patients/me` (JWT, rôle patient)
+- `GET /appointments/me`, `POST /appointments`, `DELETE /appointments/:id` (JWT, patient)
+- `GET /doctors`, `GET /doctors/search`, `GET /doctors/:id` (public pour l’annuaire)
+
+Après `npm run seed` (ou `npx ts-node src/database/seeds/run-seeds.ts`), comptes de démonstration :
+
+**Mot de passe (tous)** : `OphthoDemo2024!` — détail complet : [`docs/DEMO_ACCOUNTS.md`](docs/DEMO_ACCOUNTS.md)
+
+| Rôle | E-mail |
+|------|--------|
+| Médecin (ophtalmo) | `dr.demo@ophthocare.local` |
+| Médecin (cardio, annuaire) | `dr.cardio.demo@ophthocare.local` |
+| Secrétaire | `secretaire.demo@ophthocare.local` |
+| Stagiaire | `stagiaire.demo@ophthocare.local` |
+| Patient | `patient.demo@ophthocare.local` |
+| Patients suppl. | `fatima.demo@…`, `karim.demo@…`, `nadia.demo@…`, `hassan.demo@…` |
+| Admin | `admin@ophthocare.local` |
+| Super admin | `superadmin@ophthocare.local` |
+
+Le seed remplit aussi agenda, consultations, documents, messagerie, notifications et modération (jeu de données idempotent).
+
+Documentation interactive : `http://localhost:3001/api` (Swagger).
+
 ## Prerequisites
 
 - Node.js 18+ 
@@ -49,28 +76,34 @@ npm run build
 npm start
 ```
 
-## Database Migrations
+## Database (Prisma)
 
-### Generate Migration
+Configurer `DATABASE_URL` dans `.env` (voir `.env.example`).
+
+### Créer / appliquer les migrations (développement)
 ```bash
-npm run typeorm:migration:generate src/database/migrations/my-migration
+npm run prisma:migrate
 ```
 
-### Run Migrations
+### Pousser le schéma sans fichier de migration (prototypage)
 ```bash
-npm run typeorm:migration:run
+npm run prisma:push
 ```
 
-### Revert Migration
+### Régénérer le client après changement de schéma
 ```bash
-npm run typeorm:migration:revert
+npm run prisma:generate
+```
+
+### Prisma Studio
+```bash
+npm run prisma:studio
 ```
 
 ## Seeds
 
 ```bash
 npm run seed
-npm run seed:specialties
 ```
 
 ## Testing
@@ -90,16 +123,19 @@ Once running, visit:
 ## Project Structure
 
 ```
+prisma/
+└── schema.prisma        # Modèle Prisma + migrations
+
 src/
-├── config/              # Configuration files
-├── common/              # Shared entities, filters, pipes
+├── prisma/              # PrismaModule + PrismaService
+├── common/              # Shared decorators, filters, pipes
 ├── modules/             # Feature modules
 │   ├── auth/           # Authentication
 │   ├── users/          # Users management
 │   ├── doctors/        # Doctors module
 │   ├── patients/       # Patients module
 │   └── specialties/    # Medical specialties
-├── database/           # Migrations and seeds
+├── database/           # Seeds
 └── main.ts            # Entry point
 ```
 
@@ -107,7 +143,7 @@ src/
 
 - **Modular**: Feature-based modules (auth, users, doctors, etc.)
 - **DTO Validation**: Class-validator for request validation
-- **Database**: TypeORM with PostgreSQL
+- **Database**: Prisma ORM with PostgreSQL
 - **Authentication**: JWT with Passport.js
 - **Documentation**: Swagger/OpenAPI
 
@@ -129,8 +165,8 @@ npm run lint
 # Build for production
 npm run build
 
-# Run migrations
-npm run typeorm:migration:run
+# Apply Prisma migrations
+npm run prisma:migrate
 
 # Seed database
 npm run seed

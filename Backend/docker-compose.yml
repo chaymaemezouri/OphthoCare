@@ -2,12 +2,15 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: ophthoccare_postgres
+    # POSTGRES_* ne s’appliquent qu’à la 1ère création du volume. Pour changer le mot de passe ensuite :
+    # docker exec ophthoccare_postgres psql -U ophthoccare -d postgres -c "ALTER USER ophthoccare WITH PASSWORD 'NOUVEAU';"
     environment:
       POSTGRES_USER: ophthoccare
-      POSTGRES_PASSWORD: secure_password_123
+      POSTGRES_PASSWORD: Ch123456
       POSTGRES_DB: ophthoccare_db
+    # Port hôte 5434 : évite le conflit avec PostgreSQL installé sur Windows (souvent 5432)
     ports:
-      - "5432:5432"
+      - "5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:

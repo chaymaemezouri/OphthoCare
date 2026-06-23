@@ -1,12 +1,21 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { useSearchStore } from '@/store/search-store';
 import { doctorsApi } from '@/lib/api';
-import type { SearchFilters, DoctorSearchResult } from '@/types';
+import type { SearchFilters } from '@/types';
 
 export const useSearch = () => {
-  const { specialty, city, searchResults, isLoading, setSearchResults, setLoading } = useSearchStore();
+  const {
+    specialty,
+    city,
+    searchResults,
+    searchTotal,
+    usedElasticsearch,
+    isLoading,
+    setSearchResults,
+    setLoading,
+  } = useSearchStore();
   const [error, setError] = useState<string | null>(null);
 
   const search = useCallback(
@@ -15,11 +24,11 @@ export const useSearch = () => {
       setError(null);
 
       try {
-        const results = await doctorsApi.search(filters);
-        setSearchResults(results);
+        const res = await doctorsApi.search(filters);
+        setSearchResults(res.items, res.total, res.usedElasticsearch ?? null);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Search failed');
-        setSearchResults([]);
+        setError(err instanceof Error ? err.message : 'Échec de la recherche');
+        setSearchResults([], 0, null);
       } finally {
         setLoading(false);
       }
@@ -31,6 +40,8 @@ export const useSearch = () => {
     specialty,
     city,
     searchResults,
+    searchTotal,
+    usedElasticsearch,
     isLoading,
     error,
     search,

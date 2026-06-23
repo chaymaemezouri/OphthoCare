@@ -1,0 +1,1114 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  admin
+  super_admin
+  doctor
+  patient
+  secretary
+  trainee
+}
+
+model User {
+  id                  String    @id @default(uuid())
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  deletedAt           DateTime?
+  email               String    @unique
+  password            String
+  firstName           String?
+  lastName            String?
+  role                UserRole  @default(patient)
+  twoFactorEnabled    Boolean   @default(false)
+  /// 2FA par SMS (optionnel) — code OTP envoyé au login si activé
+  twoFactorSmsEnabled Boolean   @default(false)
+  phoneNumber         String?
+  metadata            Json?
+  isActive            Boolean   @default(true)
+  /// Préférence locale (FR / AR / EN)
+  lang                String    @default("fr")
+
+  doctor                Doctor?
+  patient               Patient?
+  /// Lien secrétaire → espace cabinet (JWT `doctorSpaceId`).
+  secretaryDoctorSpace  SecretaryDoctorSpace?
+  /// Stagiaire → espace cabinet (lecture dossier / consultations).
+  traineeDoctorSpace    TraineeDoctorSpace?
+  appointmentsCancelled Appointment[]         @relation("AppointmentCancelledBy")
+  otpChallenges         AuthOtpChallenge[]
+
+  refreshTokens       RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
+  platformAuditLogs   PlatformAuditLog[]
+  activeSessions      ActiveSession[]
+
+  medicalRecordsAuthored      MedicalRecord[]          @relation("MedicalRecordAuthor")
+  medicalRecordVersionsEdited MedicalRecordVersion[]   @relation("MedicalRecordVersionEditor")
+  patientMedicalAuditsEdited  PatientMedicalAudit[]    @relation("PatientMedicalAuditEditor")
+  traineeLearningSessions     TraineeLearningSession[]
+  messagesSent                Message[]                @relation("MessageSender")
+
+  @@map("users")
+}
+
+/// Jeton de rafraîchissement opaque (révocation en base, aligné guide §2.1).
+model RefreshToken {
+  id        String    @id @default(uuid())
+  createdAt DateTime  @default(now())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activeSession ActiveSession?
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+/// Réinitialisation mot de passe — usage unique (guide §2.1).
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  createdAt DateTime  @default(now())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+/// OTP SMS (login 2FA ou activation) — code stocké en hash
+model AuthOtpChallenge {
+  id         String    @id @default(uuid())
+  createdAt  DateTime  @default(now())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash   String
+  purpose    String
+  expiresAt  DateTime
+  consumedAt DateTime?
+
+  @@index([userId, purpose])
+  @@map("auth_otp_challenges")
+}
+
+model Specialty {
+  id             String    @id @default(uuid())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+  code           String    @unique
+  name           String
+  description    String?
+  icon           String?
+  /// @deprecated — préférer `specificFields` (tableau SpecialtyField JSON).
+  defaultFields  Json?
+  /// Gabarit formulaire consultation : [{ key, label, type, ... }]
+  specificFields Json?
+  examTypes      String[]  @default([])
+  doctorCount    Int       @default(0)
+
+  doctors Doctor[]
+
+  @@map("specialties")
+}
+
+model Doctor {
+  id                  String    @id @default(uuid())
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  deletedAt           DateTime?
+  specialtyCode       String
+  subSpecialties      String?   @db.Text
+  licenseNumber       String?
+  bio                 String?
+  /// URL relative servie sous /uploads/... ou absolue
+  profilePhotoUrl     String?
+  /// Sites d’exercice : [{ id, name, street, city, postalCode, consultationPrice, workingHours?, isPrimary }]
+  practiceSites       Json?
+  rating              Decimal   @default(0) @db.Decimal(3, 2)
+  reviewCount         Int       @default(0)
+  city                String
+  street              String
+  postalCode          String
+  latitude            Decimal?  @db.Decimal(10, 7)
+  longitude           Decimal?  @db.Decimal(10, 7)
+  consultationPrice   Decimal   @default(0) @db.Decimal(8, 2)
+  /// Durée de créneau agenda / disponibilité (15–120 min)
+  slotDurationMinutes Int       @default(30)
+  workingHours        Json?
+  isVerified          Boolean   @default(false)
+  /// Numéro d’ordre / RPPS (affichage public contrôlé)
+  orderNumber         String?
+  preferredCurrency   String    @default("MAD")
+  isCertified         Boolean   @default(false)
+  isSuspended         Boolean   @default(false)
+  suspendReason       String?   @db.Text
+  /// Signature : URL publique OU préfixe `private:sig:` + id fichier (stockage local privé, équivalent S3 privé).
+  signatureUrl        String?
+  userId              String?   @unique
+
+  user        User?        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  specialty   Specialty    @relation(fields: [specialtyCode], references: [code])
+  doctorSpace DoctorSpace?
+
+  appointments    Appointment[]
+  scheduleBlocks  ScheduleBlock[]
+  consultations   Consultation[]
+  medicalReports  MedicalReport[]
+  referralLetters ReferralLetter[]
+  patientMessages DoctorPatientMessage[]
+  medicalImages   PatientMedicalImage[]
+  prescriptions   Prescription[]
+  paymentReceipts PaymentReceipt[]
+  reviews         DoctorReview[]
+
+  @@index([specialtyCode, city])
+  @@map("doctors")
+}
+
+/// Espace multi-tenant du médecin (un par praticien).
+model DoctorSpace {
+  id                      String                      @id @default(uuid())
+  createdAt               DateTime                    @default(now())
+  updatedAt               DateTime                    @updatedAt
+  doctorId                String                      @unique
+  name                    String
+  doctor                  Doctor                      @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  sites                   DoctorSite[]
+  patientAccesses         PatientDoctorAccess[]
+  secretaryLinks          SecretaryDoctorSpace[]
+  traineeLinks            TraineeDoctorSpace[]
+  appointments            Appointment[]
+  scheduleBlocks          ScheduleBlock[]
+  consultations           Consultation[]
+  preConsultationForms    PreConsultationForm[]
+  medicalReports          MedicalReport[]
+  referralLetters         ReferralLetter[]
+  patientMessages         DoctorPatientMessage[]
+  medicalImages           PatientMedicalImage[]
+  webhooks                Webhook[]
+  apiKeys                 ApiKey[]
+  traineeLearningSessions TraineeLearningSession[]
+  medicalRecords          MedicalRecord[]
+  prescriptions           Prescription[]
+  paymentReceipts         PaymentReceipt[]
+  receiptCounters         DoctorSpaceReceiptCounter[]
+  conversations           Conversation[]
+  broadcastLogs           BroadcastLog[]
+
+  @@map("doctor_spaces")
+}
+
+model DoctorSite {
+  id            String      @id @default(uuid())
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  deletedAt     DateTime?
+  doctorSpaceId String
+  doctorSpace   DoctorSpace @relation(fields: [doctorSpaceId], references: [id], onDelete: Cascade)
+  name          String
+  street        String
+  postalCode    String?
+  city          String
+  country       String      @default("MA")
+  latitude      Decimal?    @db.Decimal(10, 7)
+  longitude     Decimal?    @db.Decimal(10, 7)
+  phone         String?
+  partnerTypes  String[]    @default([])
+  isPrimary     Boolean     @default(false)
+  displayOrder  Int         @default(0)
+
+  workingHours   SiteWorkingHour[]
+  tariffs        Tariff[]
+  appointments   Appointment[]
+  scheduleBlocks ScheduleBlock[]
+
+  @@index([doctorSpaceId])
+  @@map("doctor_sites")
+}
+
+/// Horaires par site (jour 0 = dimanche … 6 = samedi).
+model SiteWorkingHour {
+  id           String     @id @default(uuid())
+  doctorSiteId String
+  doctorSite   DoctorSite @relation(fields: [doctorSiteId], references: [id], onDelete: Cascade)
+  dayOfWeek    Int
+  startTime    String
+  endTime      String
+  isActive     Boolean    @default(true)
+
+  @@index([doctorSiteId, dayOfWeek])
+  @@map("site_working_hours")
+}
+
+model Tariff {
+  id              String     @id @default(uuid())
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  deletedAt       DateTime?
+  doctorSiteId    String
+  doctorSite      DoctorSite @relation(fields: [doctorSiteId], references: [id], onDelete: Cascade)
+  actType         String
+  label           String
+  amount          Decimal    @db.Decimal(10, 2)
+  currency        String     @default("MAD")
+  durationMinutes Int?
+
+  @@index([doctorSiteId])
+  @@map("tariffs")
+}
+
+enum ScheduleBlockKind {
+  absence
+  closure
+  vacation
+  /// Pause / blocage court (équivalent « BREAK » métier)
+  break_pause
+}
+
+/// Indisponibilités médecin (congés, fermeture cabinet, absence ponctuelle)
+model ScheduleBlock {
+  id            String            @id @default(uuid())
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  startTime     DateTime
+  endTime       DateTime
+  kind          ScheduleBlockKind @default(absence)
+  note          String?           @db.Text
+  doctorId      String
+  doctor        Doctor            @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  doctorSpaceId String?
+  doctorSpace   DoctorSpace?      @relation(fields: [doctorSpaceId], references: [id], onDelete: Cascade)
+  doctorSiteId  String?
+  doctorSite    DoctorSite?       @relation(fields: [doctorSiteId], references: [id], onDelete: Cascade)
+
+  @@index([doctorId, startTime])
+  @@index([doctorSiteId, startTime])
+  @@map("schedule_blocks")
+}
+
+model Patient {
+  id                     String    @id @default(uuid())
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  deletedAt              DateTime?
+  dateOfBirth            DateTime? @db.Date
+  gender                 String?
+  /// Stocké chiffré AES-256-GCM (préfixe `enc:v1:`).
+  nationalId             String?
+  medicalData            Json?
+  insuranceProvider      String?
+  insuranceNumber        String?
+  familyMembers          Json?
+  /// Diagnostics CIM-10 déclarés par le patient : [{ code, label, notes?, recordedAt? }]
+  diagnoses              Json?
+  cnssAffiliation        String?
+  amoRightsNumber        String?
+  mutuelleName           String?
+  mutuelleContractNumber String?
+  coverageNotes          String?   @db.Text
+  /// Couverture (taux, régime, etc.)
+  insuranceCoverage      String?   @db.Text
+  address                String?   @db.Text
+  phone                  String?
+  allergies              String[]  @default([])
+  antecedents            String[]  @default([])
+  bloodType              String?
+  /// Contact d’urgence : { name, relation, phone }
+  emergencyContact       Json?
+  userId                 String?   @unique
+
+  user                    User?                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointments            Appointment[]
+  medicalRecords          MedicalRecord[]
+  medicalAudits           PatientMedicalAudit[]
+  doctorAccesses          PatientDoctorAccess[]
+  consents                PatientConsent[]
+  consultations           Consultation[]
+  preConsultationForms    PreConsultationForm[]
+  inAppNotifications      PatientInAppNotification[]
+  medicalReports          MedicalReport[]
+  referralLetters         ReferralLetter[]
+  doctorMessages          DoctorPatientMessage[]
+  medicalImages           PatientMedicalImage[]
+  traineeLearningSessions TraineeLearningSession[]
+  prescriptions           Prescription[]
+  paymentReceipts         PaymentReceipt[]
+  conversations           Conversation[]
+
+  @@map("patients")
+}
+
+enum PatientInAppNotificationKind {
+  appointment
+  receipt
+  document
+  cabinet_message
+  system
+}
+
+/// Notifications affichées dans l’espace patient (rappels métier, reçus, messages cabinet).
+model PatientInAppNotification {
+  id        String                       @id @default(uuid())
+  createdAt DateTime                     @default(now())
+  readAt    DateTime?
+  patientId String
+  kind      PatientInAppNotificationKind @default(system)
+  title     String
+  body      String?                      @db.Text
+  linkPath  String?
+  meta      Json?
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, createdAt])
+  @@map("patient_in_app_notifications")
+}
+
+/// Accès patient ↔ espace médecin (créé au 1er RDV confirmé dans cet espace).
+model PatientDoctorAccess {
+  id            String   @id @default(uuid())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  patientId     String
+  doctorSpaceId String
+  firstVisit    DateTime
+  lastVisit     DateTime
+
+  patient     Patient     @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctorSpace DoctorSpace @relation(fields: [doctorSpaceId], references: [id], onDelete: Cascade)
+
+  @@unique([patientId, doctorSpaceId])
+  @@index([doctorSpaceId, lastVisit])
+  @@map("patient_doctor_accesses")
+}
+
+model PatientConsent {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  patientId String
+  type      String
+  signedAt  DateTime
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@unique([patientId, type])
+  @@index([patientId])
+  @@map("patient_consents")
+}
+
+model SecretaryDoctorSpace {
+  id            String      @id @default(uuid())
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  userId        String      @unique
+  doctorSpaceId String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  doctorSpace   DoctorSpace @relation(fields: [doctorSpaceId], references: [id], onDelete: Cascade)
+
+  @@index([doctorSpaceId])
+  @@map("secretary_doctor_spaces")
+}
+
+model TraineeDoctorSpace {
+  id            String      @id @default(uuid())
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  userId        String      @unique
+  doctorSpaceId String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  doctorSpace   DoctorSpace @relation(fields: [doctorSpaceId], references: [id], onDelete: Cascade)
+
+  @@index([doctorSpaceId])
+  @@map("trainee_doctor_spaces")
+}
+
+/// Questionnaire pré-consultation (lié optionnellement au RDV via `Appointment.preConsultationFormId`).
+model PreConsultationForm {
+  id                  String         @id @default(uuid())
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  patientId           String
+  doctorSpaceId       String
+  specialtyCode       String?
+  /// Réponses indexées par clé de champ (alignées sur le template spécialité).
+  responses           Json           @default("{}")
+  /// Copie figée à la soumission (traçabilité).
+  originalSnapshot    Json?
+  /// Lien public sans authentification (`/pre-consultation/:token`).
+  publicToken         String?        @unique
+  patient             Patient        @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctorSpace         DoctorSpace    @relation(fields: [doctorSpaceId], references: [id], onDelete: Cascade)
+  appointmentLink     Appointment?
+  consultationImports Consultation[] @relation("ConsultationPreFormSource")
+
+  @@index([patientId, doctorSpaceId])
+  @@map("pre_consultation_forms")
+}
+
+enum ConsultationStatus {
+  draft
+  in_progress
+  completed
+}
+
+/// Consultation clinique (dossier multi-spécialités, champs dynamiques dans `structuredData`).
+model Consultation {
+  id                    String               @id @default(uuid())
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  appointmentId         String?
+  patientId             String
+  doctorId              String
+  doctorSpaceId         String
+  specialtyCode         String
+  structuredData        Json                 @default("{}")
+  observations          String?              @db.Text
+  diagnosis             String?              @db.Text
+  plan                  String?              @db.Text
+  prescriptionIds       String[]             @default([])
+  status                ConsultationStatus   @default(draft)
+  startAt               DateTime?
+  closedAt              DateTime?
+  /// Durée consultation en secondes (fermeture − ouverture).
+  durationSeconds       Int?
+  /// Formulaire pré-consultation importé (traçabilité).
+  preConsultationFormId String?
+  preConsultationForm   PreConsultationForm? @relation("ConsultationPreFormSource", fields: [preConsultationFormId], references: [id], onDelete: SetNull)
+  /// Métadonnées d’import : { originalResponses, mappedKeys, importedAt }.
+  importAudit           Json?
+
+  patient         Patient               @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor          Doctor                @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  doctorSpace     DoctorSpace           @relation(fields: [doctorSpaceId], references: [id], onDelete: Cascade)
+  appointment     Appointment?          @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  receipt         ConsultationReceipt?
+  medicalReports  MedicalReport[]
+  referralLetters ReferralLetter[]
+  medicalImages   PatientMedicalImage[]
+  prescriptions   Prescription[]
+  paymentReceipts PaymentReceipt[]
+
+  @@index([patientId, createdAt])
+  @@index([doctorSpaceId, status])
+  @@index([doctorId, createdAt])
+  @@map("consultations")
+}
+
+model ConsultationReceipt {
+  id             String       @id @default(uuid())
+  createdAt      DateTime     @default(now())
+  consultationId String       @unique
+  consultation   Consultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+  amount         Decimal      @db.Decimal(10, 2)
+  currency       String       @default("MAD")
+  payload        Json?
+
+  @@map("consultation_receipts")
+}
+
+enum AppointmentStatus {
+  pending
+  confirmed
+  /// Consultation ouverte par le médecin
+  in_progress
+  completed
+  cancelled
+  no_show
+}
+
+enum AppointmentType {
+  in_person
+  video
+}
+
+/// Motif / type de visite (métier) — distinct du canal `AppointmentType` (présentiel / vidéo).
+enum AppointmentVisitKind {
+  new_visit
+  followup
+  emergency
+  teleconsult
+}
+
+model Appointment {
+  id                    String               @id @default(uuid())
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  deletedAt             DateTime?
+  startTime             DateTime
+  endTime               DateTime
+  status                AppointmentStatus    @default(pending)
+  type                  AppointmentType      @default(in_person)
+  visitKind             AppointmentVisitKind @default(new_visit)
+  reason                String?
+  notes                 String?
+  reminderSent          Boolean              @default(false)
+  reminderDayBeforeSent Boolean              @default(false)
+  reminderTwoHourSent   Boolean              @default(false)
+  doctorId              String
+  patientId             String
+  doctorSpaceId         String?
+  doctorSpace           DoctorSpace?         @relation(fields: [doctorSpaceId], references: [id], onDelete: SetNull)
+  doctorSiteId          String?
+  doctorSite            DoctorSite?          @relation(fields: [doctorSiteId], references: [id], onDelete: SetNull)
+  familyMemberId        String?
+  cancelReason          String?              @db.Text
+  cancelledByUserId     String?
+  cancelledBy           User?                @relation("AppointmentCancelledBy", fields: [cancelledByUserId], references: [id], onDelete: SetNull)
+  preConsultationFormId String?              @unique
+  preConsultationForm   PreConsultationForm? @relation(fields: [preConsultationFormId], references: [id], onDelete: SetNull)
+
+  doctor         Doctor          @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  patient        Patient         @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  medicalRecords MedicalRecord[]
+  consultations  Consultation[]
+
+  @@index([patientId, startTime])
+  @@index([doctorId, startTime])
+  @@index([doctorSiteId, startTime])
+  @@index([doctorSpaceId, startTime])
+  @@map("appointments")
+}
+
+/// Entrée de dossier clinique structurée (consultation / note médecin), généralisable par spécialité via structuredData + specialtyCode.
+model MedicalRecord {
+  id             String    @id @default(uuid())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+  patientId      String
+  authorUserId   String
+  appointmentId  String?
+  /// Cabinet propriétaire de l’entrée (isolation multi-tenant).
+  doctorSpaceId  String?
+  specialtyCode  String
+  title          String?
+  narrative      String?   @db.Text
+  structuredData Json      @default("{}")
+
+  patient     Patient                @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  author      User                   @relation("MedicalRecordAuthor", fields: [authorUserId], references: [id], onDelete: Restrict)
+  appointment Appointment?           @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  doctorSpace DoctorSpace?           @relation(fields: [doctorSpaceId], references: [id], onDelete: SetNull)
+  versions    MedicalRecordVersion[]
+
+  @@index([patientId, createdAt])
+  @@index([patientId, doctorSpaceId, createdAt])
+  @@index([authorUserId])
+  @@map("medical_records")
+}
+
+/// Historique des modifications d'une entrée MedicalRecord (versioning).
+model MedicalRecordVersion {
+  id              String   @id @default(uuid())
+  createdAt       DateTime @default(now())
+  medicalRecordId String
+  snapshot        Json
+  editedByUserId  String
+  changeSummary   String?  @db.Text
+
+  medicalRecord MedicalRecord @relation(fields: [medicalRecordId], references: [id], onDelete: Cascade)
+  editedBy      User          @relation("MedicalRecordVersionEditor", fields: [editedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([medicalRecordId, createdAt])
+  @@map("medical_record_versions")
+}
+
+/// Journal des mises à jour du dossier administratif / antécédents (medicalData, diagnostics) par un soignant.
+model PatientMedicalAudit {
+  id              String   @id @default(uuid())
+  createdAt       DateTime @default(now())
+  patientId       String
+  editorUserId    String
+  previousPayload Json?
+  newPayload      Json?
+  summary         String?  @db.Text
+
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  editor  User    @relation("PatientMedicalAuditEditor", fields: [editorUserId], references: [id], onDelete: Restrict)
+
+  @@index([patientId, createdAt])
+  @@map("patient_medical_audits")
+}
+
+enum PdfGenerationStatus {
+  pending
+  ready
+  failed
+}
+
+enum PrescriptionDocumentType {
+  STANDARD
+  OPTIC
+  KINE
+  WORK_STOPPAGE
+  DIET
+}
+
+enum ClinicalReportDocumentType {
+  CONSULTATION
+  CERTIFICATE
+  REFERRAL
+  DISCHARGE
+  WORK_STOPPAGE
+}
+
+enum PaymentReceiptStatus {
+  PENDING
+  PAID
+  PARTIAL
+  CANCELLED
+}
+
+enum PaymentReceiptMethod {
+  CASH
+  CARD
+  INSURANCE
+  WIRE
+}
+
+/// Ordonnance PDF (Sem 21–22).
+model Prescription {
+  id                   String                   @id @default(uuid())
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+  consultationId       String?
+  patientId            String
+  doctorId             String
+  doctorSpaceId        String
+  type                 PrescriptionDocumentType @default(STANDARD)
+  medications          Json                     @default("[]")
+  pdfStorageKey        String?
+  pdfUrl               String?
+  pdfStatus            PdfGenerationStatus      @default(pending)
+  verificationUuid     String                   @unique @default(uuid())
+  documentFooterNumber String?
+
+  consultation Consultation? @relation(fields: [consultationId], references: [id], onDelete: SetNull)
+  patient      Patient       @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor       Doctor        @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  doctorSpace  DoctorSpace   @relation(fields: [doctorSpaceId], references: [id], onDelete: Cascade)
+
+  @@index([patientId, createdAt])
+  @@index([doctorSpaceId, createdAt])
+  @@map("prescriptions")
+}
+
+/// Reçu / facture avec numérotation YYYY-NNNNN par cabinet.
+model PaymentReceipt {
+  id               String                @id @default(uuid())
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  consultationId   String?
+  patientId        String
+  doctorId         String
+  doctorSpaceId    String
+  sequentialNumber String
+  actType          String
+  actLabel         String
+  amount           Decimal               @db.Decimal(10, 2)
+  currency         String                @default("MAD")
+  status           PaymentReceiptStatus  @default(PENDING)
+  paidAt           DateTime?
+  paymentMethod    PaymentReceiptMethod?
+  pdfStorageKey    String?
+  pdfUrl           String?
+  pdfStatus        PdfGenerationStatus   @default(pending)
+  verificationUuid String                @unique @default(uuid())
+
+  patient      Patient       @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor       Doctor        @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  doctorSpace  DoctorSpace   @relation(fields: [doctorSpaceId], references: [id], onDelete: Cascade)
+  consultation Consultation? @relation(fields: [consultationId], references: [id], onDelete: SetNull)
+
+  @@unique([doctorSpaceId, sequentialNumber])
+  @@index([patientId, createdAt])
+  @@index([doctorSpaceId, createdAt])
+  @@map("payment_receipts")
+}
+
+/// Compteur atomique reçus par cabinet et année.
+model DoctorSpaceReceiptCounter {
+  doctorSpaceId String
+  year          Int
+  lastNumber    Int         @default(0)
+  doctorSpace   DoctorSpace @relation(fields: [doctorSpaceId], references: [id], onDelete: Cascade)
+
+  @@id([doctorSpaceId, year])
+  @@map("doctor_space_receipt_counters")
+}
+
+/// Base médicaments (auto-complétion FR + MA).
+model Medication {
+  id          String   @id @default(uuid())
+  createdAt   DateTime @default(now())
+  name        String
+  genericName String?
+  form        String?
+  dosages     String[] @default([])
+  countryTags String[] @default(["FR", "MA"])
+
+  @@index([name])
+  @@map("medications")
+}
+
+/// Compte rendu médical structuré (médecin → patient).
+model MedicalReport {
+  id                   String                     @id @default(uuid())
+  createdAt            DateTime                   @default(now())
+  updatedAt            DateTime                   @updatedAt
+  patientId            String
+  doctorId             String
+  doctorSpaceId        String
+  consultationId       String?
+  title                String
+  content              String                     @db.Text
+  specialtyCode        String?
+  reportType           ClinicalReportDocumentType @default(CONSULTATION)
+  pdfStorageKey        String?
+  pdfUrl               String?
+  pdfStatus            PdfGenerationStatus        @default(pending)
+  verificationUuid     String                     @unique @default(uuid())
+  shareToken           String?                    @unique
+  sharedAt             DateTime?
+  sentToPatientAt      DateTime?
+  documentFooterNumber String?
+
+  patient      Patient       @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor       Doctor        @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  doctorSpace  DoctorSpace   @relation(fields: [doctorSpaceId], references: [id], onDelete: Cascade)
+  consultation Consultation? @relation(fields: [consultationId], references: [id], onDelete: SetNull)
+
+  @@index([patientId, createdAt])
+  @@index([doctorSpaceId, createdAt])
+  @@map("medical_reports")
+}
+
+enum ReferralLetterStatus {
+  draft
+  sent
+}
+
+/// Lettre de référence / orientation vers un confrère.
+model ReferralLetter {
+  id                 String               @id @default(uuid())
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  patientId          String
+  doctorId           String
+  doctorSpaceId      String
+  consultationId     String?
+  recipientName      String
+  recipientSpecialty String?
+  recipientAddress   String?              @db.Text
+  body               String               @db.Text
+  status             ReferralLetterStatus @default(draft)
+
+  patient      Patient       @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor       Doctor        @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  doctorSpace  DoctorSpace   @relation(fields: [doctorSpaceId], references: [id], onDelete: Cascade)
+  consultation Consultation? @relation(fields: [consultationId], references: [id], onDelete: SetNull)
+
+  @@index([patientId, createdAt])
+  @@index([doctorSpaceId, createdAt])
+  @@map("referral_letters")
+}
+
+/// Message cabinet → patient (historique + notification in-app).
+model DoctorPatientMessage {
+  id            String    @id @default(uuid())
+  createdAt     DateTime  @default(now())
+  doctorSpaceId String
+  doctorId      String
+  patientId     String
+  subject       String
+  body          String    @db.Text
+  readAt        DateTime?
+
+  doctorSpace DoctorSpace @relation(fields: [doctorSpaceId], references: [id], onDelete: Cascade)
+  doctor      Doctor      @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  patient     Patient     @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([doctorSpaceId, createdAt])
+  @@index([patientId, createdAt])
+  @@map("doctor_patient_messages")
+}
+
+enum BroadcastRecipientFilter {
+  ALL
+  ACTIVE_LAST_30D
+  CHRONIC
+}
+
+/// Fil de messagerie patient ↔ cabinet (Sem 23–24).
+model Conversation {
+  id                 String   @id
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  patientId          String
+  doctorSpaceId      String
+  lastMessageAt      DateTime @default(now())
+  unreadCountDoctor  Int      @default(0)
+  unreadCountPatient Int      @default(0)
+
+  patient     Patient     @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctorSpace DoctorSpace @relation(fields: [doctorSpaceId], references: [id], onDelete: Cascade)
+  messages    Message[]
+
+  @@unique([patientId, doctorSpaceId])
+  @@index([doctorSpaceId, lastMessageAt])
+  @@index([patientId, lastMessageAt])
+  @@map("conversations")
+}
+
+model Message {
+  id             String    @id @default(uuid())
+  createdAt      DateTime  @default(now())
+  conversationId String
+  senderId       String
+  senderRole     UserRole
+  content        String    @db.Text
+  readAt         DateTime?
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation("MessageSender", fields: [senderId], references: [id], onDelete: Restrict)
+
+  @@index([conversationId, createdAt])
+  @@index([conversationId, id])
+  @@map("messages")
+}
+
+/// Historique des envois groupés (newsletter médecin).
+model BroadcastLog {
+  id              String                   @id @default(uuid())
+  createdAt       DateTime                 @default(now())
+  doctorSpaceId   String
+  doctorId        String
+  subject         String
+  content         String                   @db.Text
+  recipientFilter BroadcastRecipientFilter
+  recipientCount  Int
+  sentAt          DateTime                 @default(now())
+
+  doctorSpace DoctorSpace @relation(fields: [doctorSpaceId], references: [id], onDelete: Cascade)
+
+  @@index([doctorSpaceId, sentAt])
+  @@map("broadcast_logs")
+}
+
+/// Examen / imagerie médicale (fichier local ou URL).
+model PatientMedicalImage {
+  id             String   @id @default(uuid())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  patientId      String
+  doctorId       String
+  doctorSpaceId  String
+  consultationId String?
+  examType       String?
+  title          String?
+  fileUrl        String
+  mimeType       String?
+  notes          String?  @db.Text
+  aiAnalysis     Json?
+
+  patient      Patient       @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor       Doctor        @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  doctorSpace  DoctorSpace   @relation(fields: [doctorSpaceId], references: [id], onDelete: Cascade)
+  consultation Consultation? @relation(fields: [consultationId], references: [id], onDelete: SetNull)
+
+  @@index([patientId, createdAt])
+  @@index([doctorSpaceId, createdAt])
+  @@map("patient_medical_images")
+}
+
+enum TraineeSessionType {
+  chat
+  quiz
+  exam_explanation
+}
+
+enum TraineeSessionStatus {
+  in_progress
+  completed
+}
+
+/// Session d'apprentissage stagiaire (chat IA, quiz, explication d'examen).
+model TraineeLearningSession {
+  id            String               @id @default(uuid())
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  userId        String
+  doctorSpaceId String
+  type          TraineeSessionType
+  status        TraineeSessionStatus @default(in_progress)
+  title         String?
+  patientId     String?
+  topic         String?
+  messages      Json?
+  quizData      Json?
+  userAnswers   Json?
+  scorePercent  Int?
+  metadata      Json                 @default("{}")
+  completedAt   DateTime?
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  doctorSpace DoctorSpace @relation(fields: [doctorSpaceId], references: [id], onDelete: Cascade)
+  patient     Patient?    @relation(fields: [patientId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([doctorSpaceId, userId, type])
+  @@map("trainee_learning_sessions")
+}
+
+/// Webhook sortant par espace cabinet (intégrations tierces).
+model Webhook {
+  id             String    @id @default(uuid())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  doctorSpaceId  String
+  url            String
+  events         String[]  @default([])
+  secret         String
+  isActive       Boolean   @default(true)
+  lastDeliveryAt DateTime?
+
+  doctorSpace  DoctorSpace          @relation(fields: [doctorSpaceId], references: [id], onDelete: Cascade)
+  deliveryLogs WebhookDeliveryLog[]
+
+  @@index([doctorSpaceId])
+  @@map("webhooks")
+}
+
+model WebhookDeliveryLog {
+  id           String   @id @default(uuid())
+  createdAt    DateTime @default(now())
+  webhookId    String
+  event        String
+  payload      Json
+  status       String
+  responseCode Int?
+  error        String?  @db.Text
+
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId, createdAt])
+  @@map("webhook_delivery_logs")
+}
+
+/// Clé API pour intégrations (en-tête X-Api-Key).
+model ApiKey {
+  id            String    @id @default(uuid())
+  createdAt     DateTime  @default(now())
+  doctorSpaceId String
+  label         String
+  keyHash       String    @unique
+  keyPrefix     String
+  lastUsedAt    DateTime?
+  isActive      Boolean   @default(true)
+
+  doctorSpace DoctorSpace @relation(fields: [doctorSpaceId], references: [id], onDelete: Cascade)
+
+  @@index([doctorSpaceId])
+  @@map("api_keys")
+}
+
+/// Actions journalisées pour l’admin (sans contenu médical — entityId haché).
+enum PlatformAuditAction {
+  VIEW_PATIENT
+  CREATE_CONSULTATION
+  UPDATE_CONSULTATION
+  CLOSE_CONSULTATION
+  GENERATE_PRESCRIPTION
+  VIEW_MEDICAL_RECORD
+  EXPORT_DOCUMENT
+  LOGIN_SUCCESS
+  LOGIN_FAILED
+  OTHER
+}
+
+model PlatformAuditLog {
+  id            String              @id @default(uuid())
+  createdAt     DateTime            @default(now())
+  userId        String?
+  doctorSpaceId String?
+  action        PlatformAuditAction
+  /// Identifiant entité (ex. patientId) — SHA-256, jamais en clair pour l’admin.
+  entityIdHash  String?
+  ip            String?
+  userAgent     String?             @db.Text
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([doctorSpaceId, createdAt])
+  @@index([action, createdAt])
+  @@map("platform_audit_logs")
+}
+
+model FailedLoginAttempt {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now())
+  email     String
+  ip        String?
+
+  @@index([ip, createdAt])
+  @@index([email, createdAt])
+  @@map("failed_login_attempts")
+}
+
+model ActiveSession {
+  id             String   @id @default(uuid())
+  createdAt      DateTime @default(now())
+  userId         String
+  refreshTokenId String   @unique
+  ip             String?
+  userAgent      String?  @db.Text
+  browser        String?
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshToken RefreshToken @relation(fields: [refreshTokenId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("active_sessions")
+}
+
+enum DoctorReviewStatus {
+  pending
+  approved
+  rejected
+}
+
+/// Avis patients — modération admin (pas de données médicales).
+model DoctorReview {
+  id            String             @id @default(uuid())
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  doctorId      String
+  patientId     String?
+  rating        Int
+  comment       String             @db.Text
+  status        DoctorReviewStatus @default(pending)
+  rejectReason  String?            @db.Text
+  moderatedAt   DateTime?
+  moderatedById String?
+
+  doctor Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([doctorId, status])
+  @@map("doctor_reviews")
+}
